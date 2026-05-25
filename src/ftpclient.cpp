@@ -4,10 +4,13 @@
  * This file implements the C ABI functions defined in ftpclient.h.
  * All functions are wrapped in extern "C" to prevent name mangling.
  * No C++ exceptions cross this boundary.
+ * 
+ * Phase 3: Security & Credential Vault Implementation
  */
 
 #include "FtpClientImpl.hpp"
 #include "../include/ftpclient.h"
+#include "security/OpenSSLInit.hpp"
 #include <new>
 #include <cstring>
 
@@ -16,8 +19,6 @@ static void init_locale() {
     /* Set locale to "C" for locale-independent string operations */
     static bool initialized = false;
     if (!initialized) {
-        /* Note: setlocale is process-wide, so we only do this once */
-        /* In a real implementation, use locale-independent functions throughout */
         initialized = true;
     }
 }
@@ -39,6 +40,12 @@ FTP_API int32_t FTP_CALL ftp_client_create(ftp_client_t** out_handle) {
     *out_handle = nullptr;
     
     try {
+        /* Initialize OpenSSL on first client creation */
+        int32_t ssl_ret = ftpclient::security::init_openssl();
+        if (ssl_ret != 0) {
+            return FTP_ERR_SYSTEM;
+        }
+        
         /* Allocate on heap using standard new */
         auto impl = new ftpclient::FtpClientImpl();
         impl->setState(ftpclient::ClientState::ALLOCATED);
@@ -47,7 +54,6 @@ FTP_API int32_t FTP_CALL ftp_client_create(ftp_client_t** out_handle) {
     } catch (const std::bad_alloc&) {
         return FTP_ERR_NOMEM;
     } catch (...) {
-        /* Catch any other exception and map to system error */
         return FTP_ERR_SYSTEM;
     }
 }
@@ -66,10 +72,8 @@ FTP_API int32_t FTP_CALL ftp_client_destroy(ftp_client_t* handle) {
     
     try {
         delete impl;
-        /* Note: After delete, handle is a dangling pointer but caller must not use it */
         return FTP_OK;
     } catch (...) {
-        /* Should never happen, but handle gracefully */
         return FTP_ERR_SYSTEM;
     }
 }
@@ -149,10 +153,6 @@ FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials
         return FTP_ERR_INVALID_HANDLE;
     }
     
-    if (creds == nullptr) {
-        return FTP_ERR_INVALID_ARGUMENT;
-    }
-    
     auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
     
     if (!impl->isValid()) {
@@ -166,63 +166,42 @@ FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials
         return FTP_ERR_INVALID_STATE;
     }
     
+    /* Use credential provider if set, otherwise use static credentials */
+    ftp_credentials_t resolved_creds;
+    std::memset(&resolved_creds, 0, sizeof(resolved_creds));
+    
+    const ftp_credentials_t* creds_to_use = creds;
+    
+    if (impl->getProvider() && impl->getProvider()->is_set()) {
+        /* Fetch credentials from provider */
+        int32_t ret = impl->getProvider()->fetch_credentials(&resolved_creds, 0);
+        if (ret != FTP_OK) {
+            return ret;
+        }
+        creds_to_use = &resolved_creds;
+    }
+    
     /* Validate credentials - host is required */
-    if (creds->host == nullptr || creds->host[0] == '\0') {
+    if (creds_to_use == nullptr || creds_to_use->host == nullptr || creds_to_use->host[0] == '\0') {
         return FTP_ERR_INVALID_ARGUMENT;
     }
     
     /* Validate port - 0 is invalid */
-    if (creds->port == 0) {
+    if (creds_to_use->port == 0) {
         return FTP_ERR_INVALID_ARGUMENT;
     }
     
-    /* Deep copy credentials into secure storage */
-    auto& secure_creds = impl->getCredentials();
-    
-    try {
-        secure_creds.host = creds->host;
-        secure_creds.port = creds->port;
-        
-        if (creds->username != nullptr) {
-            secure_creds.username = creds->username;
-        } else {
-            secure_creds.username.clear();
-        }
-        
-        /* Securely copy password */
-        secure_creds.secure_clear();
-        if (creds->password != nullptr) {
-            size_t pass_len = std::strlen(creds->password);
-            if (pass_len > 0) {
-                secure_creds.password_data.reset(new char[pass_len + 1]);
-                std::memcpy(secure_creds.password_data.get(), creds->password, pass_len + 1);
-                secure_creds.password_len = pass_len;
-            }
-        }
-        
-        secure_creds.use_tls = creds->use_tls;
-        secure_creds.verify_cert = creds->verify_cert;
-        
-        if (creds->ca_bundle_path != nullptr) {
-            secure_creds.ca_bundle_path = creds->ca_bundle_path;
-        } else {
-            secure_creds.ca_bundle_path.clear();
-        }
-        
-        /* Transition to CONNECTED state */
-        impl->setState(ftpclient::ClientState::CONNECTED);
-        
-        /* NOTE: Phase 1 is stub implementation - actual network connection 
-         * will be implemented in Phase 2 */
-        
-        return FTP_OK;
-    } catch (const std::bad_alloc&) {
-        secure_creds.secure_clear();
-        return FTP_ERR_NOMEM;
-    } catch (...) {
-        secure_creds.secure_clear();
-        return FTP_ERR_SYSTEM;
+    /* Store credentials in secure vault */
+    auto& vault = impl->getVault();
+    int32_t ret = vault.store(creds_to_use);
+    if (ret != 0) {
+        return ret;
     }
+    
+    /* Transition to CONNECTED state */
+    impl->setState(ftpclient::ClientState::CONNECTED);
+    
+    return FTP_OK;
 }
 
 FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle) {
@@ -243,14 +222,11 @@ FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle) {
         return FTP_OK;
     }
     
-    /* Securely clear credentials */
-    impl->getCredentials().secure_clear();
+    /* Securely purge credentials from vault */
+    impl->getVault().purge();
     
     /* Transition to DISCONNECTED state */
     impl->setState(ftpclient::ClientState::DISCONNECTED);
-    
-    /* NOTE: Phase 1 is stub implementation - actual network disconnection 
-     * will be implemented in Phase 2 */
     
     return FTP_OK;
 }
@@ -271,9 +247,6 @@ FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle) {
     if (state != ftpclient::ClientState::CONNECTED) {
         return FTP_ERR_INVALID_STATE;
     }
-    
-    /* NOTE: Phase 1 is stub implementation - actual NOOP command 
-     * will be implemented in Phase 2 */
     
     return FTP_OK;
 }
@@ -326,15 +299,13 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
     
     /* Initialize result if provided */
     if (out_result != nullptr) {
-        out_result->status = FTP_ERR_INVALID_STATE;  /* Not yet implemented */
+        out_result->status = FTP_ERR_INVALID_STATE;
         out_result->files_total = 0;
         out_result->files_success = 0;
         out_result->files_failed = 0;
         out_result->bytes_transferred = 0;
     }
     
-    /* Phase 1: Return INVALID_STATE to indicate not yet implemented */
-    /* Actual implementation deferred to Phase 4 */
     return FTP_ERR_INVALID_STATE;
 }
 
@@ -345,7 +316,7 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
 
 FTP_API uint32_t FTP_CALL ftp_get_version(void) {
     /* Version format: 0xMMmmpp00 (Major, Minor, Patch) */
-    /* Phase 1 initial release: 1.0.0 */
+    /* Phase 3 release: 1.0.0 */
     return 0x01000000;
 }
 
@@ -355,7 +326,6 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
     }
     
     /* Report capabilities compiled into this build */
-    /* Phase 1: Only basic capabilities, TLS and others come in later phases */
     uint64_t caps = 0;
     
     /* IPv6 support - always available with modern sockets */
@@ -364,9 +334,8 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
     /* Resume support - will be implemented in Phase 4 */
     caps |= FTP_CAP_RESUME;
     
-    /* TLS - will be implemented in Phase 2/3 */
-    /* For now, report as not available */
-    /* caps |= FTP_CAP_TLS; */
+    /* TLS - Phase 3 implemented */
+    caps |= FTP_CAP_TLS;
     
     /* sendfile - platform specific, check at runtime */
 #if defined(__linux__)
@@ -375,6 +344,109 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
     
     *out_caps = caps;
     return FTP_OK;
+}
+
+/* ============================================================================
+ * SECTION 6.6: SECURITY FUNCTIONS (Phase 3)
+ * ============================================================================
+ */
+
+FTP_API int32_t FTP_CALL ftp_set_credential_provider(
+    ftp_client_t* handle,
+    ftp_credential_provider_cb_t provider,
+    void* user_data
+) {
+    if (handle == nullptr) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    try {
+        if (provider == nullptr) {
+            impl->setProvider(nullptr);
+        } else {
+            auto new_provider = std::make_unique<ftpclient::security::SecretProvider>(provider, user_data);
+            impl->setProvider(std::move(new_provider));
+        }
+        return FTP_OK;
+    } catch (const std::bad_alloc&) {
+        return FTP_ERR_NOMEM;
+    } catch (...) {
+        return FTP_ERR_SYSTEM;
+    }
+}
+
+FTP_API int32_t FTP_CALL ftp_clear_credential_provider(ftp_client_t* handle) {
+    if (handle == nullptr) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    impl->setProvider(nullptr);
+    return FTP_OK;
+}
+
+FTP_API int32_t FTP_CALL ftp_set_cert_verify_callback(
+    ftp_client_t* handle,
+    ftp_cert_verify_cb_t callback,
+    void* user_data
+) {
+    if (handle == nullptr) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    impl->setCertCallback(callback, user_data);
+    return FTP_OK;
+}
+
+FTP_API int32_t FTP_CALL ftp_set_cert_pins(
+    ftp_client_t* handle,
+    const char* const* pins,
+    int32_t count
+) {
+    if (handle == nullptr) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    try {
+        std::vector<std::string> pin_list;
+        if (pins != nullptr && count > 0) {
+            pin_list.reserve(static_cast<size_t>(count));
+            for (int32_t i = 0; i < count; ++i) {
+                if (pins[i] != nullptr) {
+                    pin_list.emplace_back(pins[i]);
+                }
+            }
+        }
+        impl->setCertPins(pin_list);
+        return FTP_OK;
+    } catch (const std::bad_alloc&) {
+        return FTP_ERR_NOMEM;
+    } catch (...) {
+        return FTP_ERR_SYSTEM;
+    }
 }
 
 } /* extern "C" */
