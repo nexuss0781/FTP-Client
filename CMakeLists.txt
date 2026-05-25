@@ -78,6 +78,19 @@ set(FTP_INTERNAL_HEADERS
     src/FtpClientImpl.hpp
 )
 
+# Phase 2 Protocol Engine Headers (header-only implementation)
+set(FTP_PROTOCOL_HEADERS
+    src/protocol/Transport.hpp
+    src/protocol/PlainTransport.hpp
+    src/protocol/ErrorMap.hpp
+    src/protocol/ReplyParser.hpp
+    src/protocol/StateMachine.hpp
+    src/protocol/DataChannel.hpp
+    src/protocol/DirectoryWalker.hpp
+    src/protocol/ControlThread.hpp
+    src/protocol/ProtocolEngine.hpp
+)
+
 # ============================================================================
 # Library Target
 # ============================================================================
@@ -155,6 +168,15 @@ set_target_properties(header_purity_test PROPERTIES
     C_STANDARD 99
     C_STANDARD_REQUIRED ON
     COMPILE_OPTIONS "-pedantic;-Wall;-Werror"
+)
+
+# Phase 2 Protocol Engine Tests
+add_executable(phase2_test tests/phase2_test.cpp)
+target_include_directories(phase2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(phase2_test PRIVATE pthread)
+set_target_properties(phase2_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
 )
 
 # ============================================================================

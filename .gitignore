@@ -3,18 +3,14 @@
 *.o
 *.obj
 *.a
+*.lib
 *.so
-*.dylib
 *.dll
 *.exe
 *.out
 
-# C/C++ build directories
+# CMake build directory
 build/
-cmake-build-*/
-Makefile
-CMakeCache.txt
-CMakeFiles/
 
 # Dependencies
 vendor/
@@ -25,7 +21,7 @@ vendor/
 # Environment
 .env
 .env.local
-.env.*
+*.env.*
 
 # Editor/IDE
 .vscode/
@@ -34,20 +30,12 @@ vendor/
 *.swo
 *.tmp
 
-# OS
-.DS_Store
-Thumbs.db
-
 # Coverage
 coverage/
 htmlcov/
 .coverage
 
-# Python (if present)
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
+# OS
+.DS_Store
+Thumbs.db
 ```
