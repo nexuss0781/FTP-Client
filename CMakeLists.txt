@@ -91,12 +91,34 @@ set(FTP_PROTOCOL_HEADERS
     src/protocol/ProtocolEngine.hpp
 )
 
+# Phase 3 Security Headers and Sources
+set(FTP_SECURITY_HEADERS
+    src/security/SecureAllocator.hpp
+    src/security/CredentialVault.hpp
+    src/security/TlsConfig.hpp
+    src/security/TlsTransport.hpp
+    src/security/OpenSSLInit.hpp
+    src/security/SecretProvider.hpp
+)
+
+set(FTP_SECURITY_SOURCES
+    src/security/CredentialVault.cpp
+    src/security/TlsTransport.cpp
+    src/security/OpenSSLInit.cpp
+    src/security/SecretProvider.cpp
+)
+
 # ============================================================================
 # Library Target
 # ============================================================================
 
 # Create shared library
-add_library(ftpclient SHARED ${FTP_SOURCES} ${FTP_HEADERS} ${FTP_INTERNAL_HEADERS})
+add_library(ftpclient SHARED 
+    ${FTP_SOURCES} 
+    ${FTP_HEADERS} 
+    ${FTP_INTERNAL_HEADERS}
+    ${FTP_SECURITY_SOURCES}
+)
 
 # Set target properties
 set_target_properties(ftpclient PROPERTIES
@@ -118,11 +140,16 @@ target_include_directories(ftpclient
 
 # Platform-specific libraries
 if(UNIX AND NOT APPLE)
-    # Linux: Link pthread
-    target_link_libraries(ftpclient PRIVATE pthread)
+    # Linux: Link pthread and OpenSSL
+    target_link_libraries(ftpclient PRIVATE pthread ssl crypto)
+elseif(APPLE)
+    # macOS: Link OpenSSL (via Homebrew or system)
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(ftpclient PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 elseif(WIN32)
-    # Windows: Link Winsock
-    target_link_libraries(ftpclient PRIVATE ws2_32)
+    # Windows: Link Winsock and OpenSSL
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(ftpclient PRIVATE ws2_32 OpenSSL::SSL OpenSSL::Crypto)
 endif()
 
 # ============================================================================

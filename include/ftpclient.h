@@ -90,6 +90,56 @@ typedef struct {
 #define FTP_VERIFY_HOST    2
 
 /*
+ * Certificate Pinning Structure (Optional Extension - Phase 3 Spec Section 5.4)
+ * 
+ * For advanced certificate pinning scenarios.
+ * If pins are provided, library validates that at least one pin matches
+ * the leaf certificate's SubjectPublicKeyInfo.
+ */
+typedef struct {
+    const char* sha256_pin;      /* Base64-encoded SHA-256 SPKI pin */
+    int32_t     pin_count;       /* Number of pins in array */
+} ftp_cert_pins_t;
+
+/*
+ * Certificate Validation Callback Type (Phase 3 Spec Section 5.4)
+ * 
+ * For advanced Python use cases (e.g., interactive "trust this host?" prompts).
+ * 
+ * @param subject      Certificate subject (UTF-8, borrowed, valid only during call)
+ * @param issuer       Certificate issuer (UTF-8, borrowed, valid only during call)
+ * @param fingerprint  SHA-256 hex fingerprint (borrowed, valid only during call)
+ * @param error_code   OpenSSL X509_V_ERR_* code
+ * @param user_data    Opaque pointer from registration
+ * @return 1 = Accept certificate, 0 = Reject
+ */
+typedef int32_t (*ftp_cert_verify_cb_t)(
+    const char*   subject,
+    const char*   issuer,
+    const char*   fingerprint,
+    int32_t       error_code,
+    void*         user_data
+);
+
+/*
+ * Credential Provider Callback Type (Phase 3 Spec Section 6.2)
+ * 
+ * Callback invoked at connection time to fetch credentials dynamically.
+ * Allows integration with Python keyring modules or HSMs without the
+ * C++ library ever persisting secrets.
+ * 
+ * @param out_creds  Pre-allocated struct to fill (caller allocates)
+ * @param user_data  Opaque pointer from registration
+ * @param attempt    0 = first attempt, 1+ = retry after failure
+ * @return FTP_OK on success, negative error code on failure
+ */
+typedef int32_t (*ftp_credential_provider_cb_t)(
+    ftp_credentials_t* out_creds,
+    void*              user_data,
+    int32_t            attempt
+);
+
+/*
  * Upload Options Structure
  * 
  * Extensibility: First member is struct_size for version detection
@@ -321,6 +371,69 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps);
 #define FTP_CAP_COMPRESSION     0x0004  /* Compression (MODE Z) support */
 #define FTP_CAP_IPV6            0x0008  /* IPv6 support */
 #define FTP_CAP_RESUME          0x0010  /* Resume/REST support */
+
+/* ----------------------------------------------------------------------------
+ * 6.6 Security Functions (Phase 3 - Credential Provider & Certificate Validation)
+ * ----------------------------------------------------------------------------
+ */
+
+/**
+ * Set a credential provider callback. Overrides static credentials.
+ * 
+ * Per Phase 3 Spec Section 6.2
+ * 
+ * @param handle       The client handle
+ * @param provider     Callback function to fetch credentials dynamically
+ * @param user_data    Opaque pointer passed to provider callback
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid
+ */
+FTP_API int32_t FTP_CALL ftp_set_credential_provider(
+    ftp_client_t*               handle,
+    ftp_credential_provider_cb_t provider,
+    void*                       user_data
+);
+
+/**
+ * Clear any set provider, reverting to static credentials.
+ * 
+ * Per Phase 3 Spec Section 6.2
+ * 
+ * @param handle  The client handle
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid
+ */
+FTP_API int32_t FTP_CALL ftp_clear_credential_provider(ftp_client_t* handle);
+
+/**
+ * Set certificate validation callback for advanced verification scenarios.
+ * 
+ * Per Phase 3 Spec Section 5.4
+ * 
+ * @param handle    The client handle
+ * @param callback  Callback function for certificate validation override
+ * @param user_data Opaque pointer passed to callback
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid
+ */
+FTP_API int32_t FTP_CALL ftp_set_cert_verify_callback(
+    ftp_client_t*         handle,
+    ftp_cert_verify_cb_t  callback,
+    void*                 user_data
+);
+
+/**
+ * Set certificate pins for pin-based validation.
+ * 
+ * Per Phase 3 Spec Section 5.4
+ * 
+ * @param handle  The client handle
+ * @param pins    Array of certificate pins (sha256_pin array)
+ * @param count   Number of pins in array
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid
+ */
+FTP_API int32_t FTP_CALL ftp_set_cert_pins(
+    ftp_client_t*      handle,
+    const char* const* pins,
+    int32_t            count
+);
 
 /* ============================================================================
  * SECTION 10: EXTENSIBILITY MECHANISM (Future-Proofing)

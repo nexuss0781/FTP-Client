@@ -3,39 +3,46 @@
 *.o
 *.obj
 *.a
-*.lib
 *.so
 *.dll
 *.exe
 *.out
 
-# CMake build directory
+# CMake build directories
 build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
 
 # Dependencies
-vendor/
+*.cmake
+conan-*
+vcpkg-*
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
 
 # Environment
 .env
 .env.local
 *.env.*
 
-# Editor/IDE
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
-*.tmp
 
 # Coverage
 coverage/
 htmlcov/
 .coverage
 
-# OS
+# OS specific
 .DS_Store
 Thumbs.db
 ```

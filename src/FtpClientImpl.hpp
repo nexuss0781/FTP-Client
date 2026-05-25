@@ -13,6 +13,11 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <vector>
+
+#include "security/CredentialVault.hpp"
+#include "security/SecretProvider.hpp"
+#include "security/TlsConfig.hpp"
 
 namespace ftpclient {
 
@@ -28,48 +33,15 @@ enum class ClientState : int32_t {
 };
 
 /**
- * Secure credential storage
- * 
- * Credentials are copied into secure memory on connect and zeroed on disconnect.
- * No std::string for password field to avoid heap fragmentation and ensure secure cleanup.
+ * Certificate validation callback type (matches C ABI)
  */
-struct SecureCredentials {
-    std::string host;
-    uint16_t port;
-    std::string username;
-    // Password stored in a way that can be securely zeroed
-    std::unique_ptr<char[]> password_data;
-    size_t password_len;
-    int32_t use_tls;
-    int32_t verify_cert;
-    std::string ca_bundle_path;
-    
-    SecureCredentials() : port(0), password_data(nullptr), password_len(0), 
-                          use_tls(0), verify_cert(1) {}
-    
-    // Securely zero all credential data including strings
-    void secure_clear() {
-        // Securely zero password data first
-        if (password_data && password_len > 0) {
-            volatile char* p = password_data.get();
-            for (size_t i = 0; i < password_len; ++i) {
-                p[i] = 0;
-            }
-        }
-        password_data.reset();
-        password_len = 0;
-        
-        // Clear strings securely by replacing with empty and shrinking capacity
-        // Note: std::string doesn't guarantee zeroing, so we use assign + shrink_to_fit
-        std::string().swap(host);
-        std::string().swap(username);
-        std::string().swap(ca_bundle_path);
-    }
-    
-    ~SecureCredentials() {
-        secure_clear();
-    }
-};
+using CertVerifyCallback = int32_t (*)(
+    const char*   subject,
+    const char*   issuer,
+    const char*   fingerprint,
+    int32_t       error_code,
+    void*         user_data
+);
 
 /**
  * Client configuration options
@@ -114,9 +86,44 @@ public:
     const ClientConfig& getConfig() const { return config_; }
     
     /**
-     * Get mutable credentials (for secure storage during connection)
+     * Get credential vault for secure storage
      */
-    SecureCredentials& getCredentials() { return creds_; }
+    security::CredentialVault& getVault() { return vault_; }
+    const security::CredentialVault& getVault() const { return vault_; }
+    
+    /**
+     * Get credential provider
+     */
+    security::SecretProvider* getProvider() { return provider_.get(); }
+    
+    /**
+     * Set credential provider
+     */
+    void setProvider(std::unique_ptr<security::SecretProvider> p) { provider_ = std::move(p); }
+    
+    /**
+     * Get certificate verification callback
+     */
+    CertVerifyCallback getCertCallback() const { return cert_callback_; }
+    void* getCertCallbackUserdata() const { return cert_callback_userdata_; }
+    
+    /**
+     * Set certificate verification callback
+     */
+    void setCertCallback(CertVerifyCallback cb, void* userdata) {
+        cert_callback_ = cb;
+        cert_callback_userdata_ = userdata;
+    }
+    
+    /**
+     * Get certificate pins
+     */
+    const std::vector<std::string>& getCertPins() const { return cert_pins_; }
+    
+    /**
+     * Set certificate pins
+     */
+    void setCertPins(const std::vector<std::string>& pins) { cert_pins_ = pins; }
     
     /**
      * Check if handle is valid (not destroyed)
@@ -141,17 +148,24 @@ public:
 private:
     std::atomic<ClientState> state_;
     ClientConfig config_;
-    SecureCredentials creds_;
+    security::CredentialVault vault_;
+    std::unique_ptr<security::SecretProvider> provider_;
+    CertVerifyCallback cert_callback_;
+    void* cert_callback_userdata_;
+    std::vector<std::string> cert_pins_;
     std::mutex mutex_;  /* For future thread-safety extensions */
 };
 
 // Inline implementations to ensure symbols are available
 inline FtpClientImpl::FtpClientImpl() 
-    : state_(ClientState::UNINITIALIZED) {
+    : state_(ClientState::UNINITIALIZED)
+    , cert_callback_(nullptr)
+    , cert_callback_userdata_(nullptr)
+{
 }
 
 inline FtpClientImpl::~FtpClientImpl() {
-    creds_.secure_clear();
+    // Vault destructor handles secure cleanup
 }
 
 } // namespace ftpclient
