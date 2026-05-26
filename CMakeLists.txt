@@ -108,6 +108,22 @@ set(FTP_SECURITY_SOURCES
     src/security/SecretProvider.cpp
 )
 
+# Phase 4 Transfer Engine Headers and Sources
+set(FTP_TRANSFER_HEADERS
+    src/transfer/Task.hpp
+    src/transfer/BufferPool.hpp
+    src/transfer/ThreadPool.hpp
+    src/transfer/ResultAggregator.hpp
+    src/transfer/TransferEngine.hpp
+)
+
+set(FTP_TRANSFER_SOURCES
+    src/transfer/BufferPool.cpp
+    src/transfer/ThreadPool.cpp
+    src/transfer/ResultAggregator.cpp
+    src/transfer/TransferEngine.cpp
+)
+
 # ============================================================================
 # Library Target
 # ============================================================================
@@ -118,6 +134,7 @@ add_library(ftpclient SHARED
     ${FTP_HEADERS} 
     ${FTP_INTERNAL_HEADERS}
     ${FTP_SECURITY_SOURCES}
+    ${FTP_TRANSFER_SOURCES}
 )
 
 # Set target properties
@@ -170,6 +187,7 @@ if(MSVC)
         "    ftp_disconnect\n"
         "    ftp_ping\n"
         "    ftp_upload_dir\n"
+        "    ftp_result_free\n"
         "    ftp_get_version\n"
         "    ftp_get_capabilities\n"
     )

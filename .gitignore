@@ -1,5 +1,5 @@
 ```
-# Build artifacts
+# Compiled and build artifacts
 *.o
 *.obj
 *.a
@@ -8,41 +8,31 @@
 *.exe
 *.out
 
-# CMake build directories
+# Build directories
 build/
-cmake-build-*/
-CMakeFiles/
-CMakeCache.txt
-Makefile
-cmake_install.cmake
+dist/
+target/
 
 # Dependencies
-*.cmake
-conan-*
-vcpkg-*
+venv/
+.venv/
+.env
+.env.local
+*.env.*
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Environment
-.env
-.env.local
-*.env.*
-
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# OS specific
-.DS_Store
-Thumbs.db
+# Python specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
 ```
