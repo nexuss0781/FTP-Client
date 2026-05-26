@@ -51,7 +51,13 @@ struct ClientConfig {
     uint32_t timeout_connect;   /* Default: 5000ms */
     uint32_t timeout_command;   /* Default: 30000ms */
     
-    ClientConfig() : buffer_size(256 * 1024), timeout_connect(5000), timeout_command(30000) {}
+    /* Phase 5 resilience configuration */
+    uint32_t retry_max_attempts;     /* Default: 3 */
+    uint64_t retry_base_delay_ms;    /* Default: 1000ms */
+    uint64_t retry_max_delay_ms;     /* Default: 30000ms */
+
+    ClientConfig() : buffer_size(256 * 1024), timeout_connect(5000), timeout_command(30000),
+                     retry_max_attempts(3), retry_base_delay_ms(1000), retry_max_delay_ms(30000) {}
 };
 
 /**
@@ -171,6 +177,14 @@ inline FtpClientImpl::FtpClientImpl()
 
 inline FtpClientImpl::~FtpClientImpl() {
     // Vault destructor handles secure cleanup
+}
+
+inline void FtpClientImpl::setRetryPolicy(uint32_t max_attempts, uint64_t base_delay_ms, uint64_t max_delay_ms) {
+    // Store retry policy configuration for Phase 5 resilience
+    // This is used by the ResilienceController during transfer operations
+    config_.retry_max_attempts = max_attempts;
+    config_.retry_base_delay_ms = base_delay_ms;
+    config_.retry_max_delay_ms = max_delay_ms;
 }
 
 } // namespace ftpclient

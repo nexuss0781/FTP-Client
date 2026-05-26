@@ -1,0 +1,38 @@
+Metadata-Version: 2.4
+Name: ftpclient
+Version: 1.0.0
+Summary: High-Performance FTP Client Library with C ABI
+Author: FTP Client Library Team
+License: MIT
+Project-URL: Homepage, https://github.com/example/ftpclient
+Project-URL: Documentation, https://github.com/example/ftpclient/docs
+Project-URL: Repository, https://github.com/example/ftpclient.git
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Operating System :: MacOS :: MacOS X
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Programming Language :: C
+Classifier: Programming Language :: C++
+Classifier: Programming Language :: C++ :: 17
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: System :: Networking
+Classifier: Typing :: Typed
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: cffi>=1.15.0
+Provides-Extra: async
+Provides-Extra: tqdm
+Requires-Dist: tqdm>=4.65.0; extra == "tqdm"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: isort>=5.12.0; extra == "dev"

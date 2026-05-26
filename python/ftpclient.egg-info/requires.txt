@@ -1,0 +1,12 @@
+cffi>=1.15.0
+
+[async]
+
+[dev]
+pytest>=7.0.0
+mypy>=1.0.0
+black>=23.0.0
+isort>=5.12.0
+
+[tqdm]
+tqdm>=4.65.0

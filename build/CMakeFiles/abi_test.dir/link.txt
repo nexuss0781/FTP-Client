@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG CMakeFiles/abi_test.dir/tests/abi_test.c.o -o abi_test  -Wl,-rpath,/workspace/build libftpclient.so.1.0.0 

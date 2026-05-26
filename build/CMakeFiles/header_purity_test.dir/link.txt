@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG CMakeFiles/header_purity_test.dir/tests/header_purity_test.c.o -o header_purity_test 

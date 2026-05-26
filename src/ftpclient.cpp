@@ -467,6 +467,8 @@ extern "C" int32_t ftp_set_retry_policy(
         return FTP_ERR_INVALID_HANDLE;
     }
     
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    
     if (!impl->isValid()) {
         return FTP_ERR_INVALID_HANDLE;
     }
