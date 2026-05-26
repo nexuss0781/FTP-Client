@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "cffi>=1.15.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ftpclient"
+version = "1.0.0"
+description = "High-Performance FTP Client Library with C ABI"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "FTP Client Library Team"}
+]
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: C",
+    "Programming Language :: C++",
+    "Programming Language :: C++ :: 17",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
+dependencies = [
+    "cffi>=1.15.0",
+]
+
+[project.optional-dependencies]
+async = []
+tqdm = ["tqdm>=4.65.0"]
+dev = [
+    "pytest>=7.0.0",
+    "mypy>=1.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/ftpclient"
+Documentation = "https://github.com/example/ftpclient/docs"
+Repository = "https://github.com/example/ftpclient.git"
+
+[tool.setuptools]
+packages = ["ftpclient"]
+package-dir = {"" = "."}
+
+[tool.setuptools.package-data]
+ftpclient = ["py.typed", "*.pyi", "_lib/*"]
+
+[tool.cffi]
+module-name = "_ftpclient"
+header-file = "../../include/ftpclient.h"
+
+[tool.mypy]
+python_version = "3.8"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = false
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --tb=short"
