@@ -126,6 +126,11 @@ public:
     void setCertPins(const std::vector<std::string>& pins) { cert_pins_ = pins; }
     
     /**
+     * Set retry policy parameters (Phase 5 Spec Section 4.1)
+     */
+    void setRetryPolicy(uint32_t max_attempts, uint64_t base_delay_ms, uint64_t max_delay_ms);
+    
+    /**
      * Check if handle is valid (not destroyed)
      */
     bool isValid() const {

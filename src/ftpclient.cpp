@@ -12,6 +12,7 @@
 #include "../include/ftpclient.h"
 #include "security/OpenSSLInit.hpp"
 #include "transfer/TransferEngine.hpp"
+#include "resilience/RetryPolicy.hpp"
 #include <new>
 #include <cstring>
 #include <vector>
@@ -443,6 +444,35 @@ FTP_API int32_t FTP_CALL ftp_set_cert_pins(
             }
         }
         impl->setCertPins(pin_list);
+        return FTP_OK;
+    } catch (const std::bad_alloc&) {
+        return FTP_ERR_NOMEM;
+    } catch (...) {
+        return FTP_ERR_SYSTEM;
+    }
+}
+
+/**
+ * ftp_set_retry_policy - Set retry policy parameters for fault recovery
+ * 
+ * Per Phase 5 Spec Section 4.1 - ABI Amendment
+ */
+extern "C" int32_t ftp_set_retry_policy(
+    ftp_client_t* handle,
+    uint32_t      max_attempts,
+    uint64_t      base_delay_ms,
+    uint64_t      max_delay_ms
+) {
+    if (!handle) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    
+    try {
+        impl->setRetryPolicy(max_attempts, base_delay_ms, max_delay_ms);
         return FTP_OK;
     } catch (const std::bad_alloc&) {
         return FTP_ERR_NOMEM;

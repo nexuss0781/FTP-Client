@@ -177,12 +177,17 @@ typedef struct {
 /*
  * Per-file result structure (Phase 4 extension)
  * Per spec Section 9.1
+ * 
+ * Phase 5 Extension: Added attempt_count and final_error fields per Phase 5 Spec Section 8.2
  */
 typedef struct ftp_file_result {
     const char* local_path;       /* Owned by library, freed by ftp_result_free() */
     const char* remote_path;      /* Owned by library, freed by ftp_result_free() */
     int32_t     status;           /* FTP_OK or error code */
     uint64_t    bytes_sent;       /* Bytes successfully transferred */
+    /* Phase 5 extensions - attempt tracking per Phase 5 Spec Section 8.2 */
+    uint32_t    attempt_count;    /* 1 = first try succeeded, >1 = retried */
+    int32_t     final_error;      /* Error code from last attempt (if failed) */
 } ftp_file_result_t;
 
 /*
@@ -488,6 +493,31 @@ typedef struct {
 
 /* ABI Version constant for runtime detection */
 #define FTP_ABI_VERSION 1
+
+/* ============================================================================
+ * SECTION 11: PHASE 5 RESILIENCE FUNCTIONS
+ * ============================================================================
+ * 
+ * Retry policy configuration for fault recovery per Phase 5 Spec Section 4.
+ */
+
+/**
+ * Set retry policy parameters for a client handle.
+ * 
+ * Per Phase 5 Spec Section 4.1 - ABI Amendment
+ * 
+ * @param handle          The client handle
+ * @param max_attempts    Maximum retry attempts (default: 3)
+ * @param base_delay_ms   Base delay for exponential backoff in ms (default: 1000)
+ * @param max_delay_ms    Maximum delay cap in ms (default: 30000)
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid
+ */
+FTP_API int32_t FTP_CALL ftp_set_retry_policy(
+    ftp_client_t* handle,
+    uint32_t      max_attempts,
+    uint64_t      base_delay_ms,
+    uint64_t      max_delay_ms
+);
 
 #ifdef __cplusplus
 }
