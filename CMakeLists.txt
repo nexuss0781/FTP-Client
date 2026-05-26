@@ -124,6 +124,23 @@ set(FTP_TRANSFER_SOURCES
     src/transfer/TransferEngine.cpp
 )
 
+# Phase 5 Resilience Engine Headers and Sources
+set(FTP_RESILIENCE_HEADERS
+    src/resilience/RetryPolicy.hpp
+    src/resilience/CircuitBreaker.hpp
+    src/resilience/StallDetector.hpp
+    src/resilience/IdempotencyClassifier.hpp
+    src/resilience/ResilienceController.hpp
+)
+
+set(FTP_RESILIENCE_SOURCES
+    src/resilience/RetryPolicy.cpp
+    src/resilience/CircuitBreaker.cpp
+    src/resilience/StallDetector.cpp
+    src/resilience/IdempotencyClassifier.cpp
+    src/resilience/ResilienceController.cpp
+)
+
 # ============================================================================
 # Library Target
 # ============================================================================
@@ -135,6 +152,7 @@ add_library(ftpclient SHARED
     ${FTP_INTERNAL_HEADERS}
     ${FTP_SECURITY_SOURCES}
     ${FTP_TRANSFER_SOURCES}
+    ${FTP_RESILIENCE_SOURCES}
 )
 
 # Set target properties
@@ -190,6 +208,7 @@ if(MSVC)
         "    ftp_result_free\n"
         "    ftp_get_version\n"
         "    ftp_get_capabilities\n"
+        "    ftp_set_retry_policy\n"
     )
     target_sources(ftpclient PRIVATE ${DEF_FILE})
 endif()
@@ -220,6 +239,15 @@ add_executable(phase2_test tests/phase2_test.cpp)
 target_include_directories(phase2_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(phase2_test PRIVATE pthread)
 set_target_properties(phase2_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+
+# Phase 5 Resilience Engine Tests
+add_executable(phase5_test tests/phase5_test.cpp src/resilience/RetryPolicy.cpp src/resilience/CircuitBreaker.cpp src/resilience/StallDetector.cpp src/resilience/IdempotencyClassifier.cpp src/resilience/ResilienceController.cpp)
+target_include_directories(phase5_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(phase5_test PRIVATE pthread)
+set_target_properties(phase5_test PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
 )
