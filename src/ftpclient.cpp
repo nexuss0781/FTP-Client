@@ -11,8 +11,10 @@
 #include "FtpClientImpl.hpp"
 #include "../include/ftpclient.h"
 #include "security/OpenSSLInit.hpp"
+#include "transfer/TransferEngine.hpp"
 #include <new>
 #include <cstring>
+#include <vector>
 
 /* Ensure locale independence as per spec Section 11 */
 static void init_locale() {

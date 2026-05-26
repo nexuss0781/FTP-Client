@@ -158,6 +158,9 @@ typedef struct {
  * Result Structure for directory upload completion
  * 
  * Ownership: Caller allocates stack/heap struct; implementation fills fields
+ * 
+ * Phase 4 Extension: Added file_results array for per-file details.
+ * See ftp_result_free() for cleanup requirements.
  */
 typedef struct {
     int32_t     status;             /* Overall operation status code */
@@ -165,7 +168,22 @@ typedef struct {
     uint64_t    files_success;
     uint64_t    files_failed;
     uint64_t    bytes_transferred;
+    
+    /* Phase 4 extension fields - only valid if struct_size >= sizeof(extended struct) */
+    uint64_t            file_result_count;
+    struct ftp_file_result* file_results; /* Array allocated by C++, freed by ftp_result_free() */
 } ftp_result_t;
+
+/*
+ * Per-file result structure (Phase 4 extension)
+ * Per spec Section 9.1
+ */
+typedef struct ftp_file_result {
+    const char* local_path;       /* Owned by library, freed by ftp_result_free() */
+    const char* remote_path;      /* Owned by library, freed by ftp_result_free() */
+    int32_t     status;           /* FTP_OK or error code */
+    uint64_t    bytes_sent;       /* Bytes successfully transferred */
+} ftp_file_result_t;
 
 /*
  * Progress Callback Type
@@ -321,7 +339,7 @@ FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle);
  */
 
 /**
- * Upload directory tree. Actual implementation deferred to Phase 4.
+ * Upload directory tree. Actual implementation in Phase 4.
  * 
  * @param handle        The client handle
  * @param local_path    UTF-8, null-terminated local directory path
@@ -329,7 +347,7 @@ FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle);
  * @param options       Nullable upload options (uses defaults if NULL)
  * @param progress_cb   Nullable progress callback
  * @param user_data     Opaque pointer passed to progress_cb
- * @param out_result    Nullable result structure (caller-allocated)
+ * @param out_result    Nullable result structure (caller-allocated, must call ftp_result_free())
  * @return FTP_OK on success, or error code from Section 5
  */
 FTP_API int32_t FTP_CALL ftp_upload_dir(
@@ -341,6 +359,20 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
     void*                   user_data,
     ftp_result_t*           out_result
 );
+
+/**
+ * Free result resources allocated by ftp_upload_dir().
+ * 
+ * Per Phase 4 Spec Section 9.2 - Memory Ownership Amendment
+ * 
+ * Caller MUST call this function on any ftp_result_t passed to ftp_upload_dir().
+ * This frees the file_results array and zeroes all strings before deallocation.
+ * Safe to call with file_results == NULL (no-op for that field).
+ * 
+ * @param result  Result structure to free (may be NULL, then no-op)
+ * @return FTP_OK on success, FTP_ERR_INVALID_ARGUMENT if result is NULL
+ */
+FTP_API int32_t FTP_CALL ftp_result_free(ftp_result_t* result);
 
 /* ----------------------------------------------------------------------------
  * 6.5 Version / Capability Introspection
