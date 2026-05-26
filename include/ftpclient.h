@@ -207,6 +207,54 @@ typedef void (*ftp_progress_cb_t)(
 );
 
 /* ============================================================================
+ * SECTION 4B: PHASE 7 TELEMETRY EVENT TYPES
+ * ============================================================================
+ * 
+ * Event types and structures for observability per Phase 7 Spec Section 7.
+ */
+
+/**
+ * Event type enumeration for telemetry callbacks
+ */
+typedef enum {
+    FTP_EVENT_CONNECT_START = 0,
+    FTP_EVENT_CONNECT_END = 1,
+    FTP_EVENT_AUTH_START = 2,
+    FTP_EVENT_AUTH_END = 3,
+    FTP_EVENT_UPLOAD_START = 4,
+    FTP_EVENT_UPLOAD_END = 5,
+    FTP_EVENT_UPLOAD_PROGRESS = 6,
+    FTP_EVENT_RETRY_TRIGGERED = 7,
+    FTP_EVENT_CIRCUIT_BREAKER_TRIP = 8,
+    FTP_EVENT_ERROR = 9
+} ftp_event_type_t;
+
+/**
+ * Event structure passed to telemetry callbacks
+ * 
+ * All string fields are borrowed references valid only during the callback.
+ * Timestamps are CLOCK_MONOTONIC nanoseconds since epoch.
+ */
+typedef struct {
+    ftp_event_type_t type;
+    int64_t          timestamp_ns;   /* CLOCK_MONOTONIC */
+    const char*      file_path;      /* Nullable */
+    const char*      remote_path;    /* Nullable */
+    int32_t          status;         /* Error code if applicable */
+    uint64_t         bytes_transferred;
+    uint64_t         duration_ns;
+    const char*      json_payload;   /* Nullable. Extra structured data. */
+} ftp_event_t;
+
+/**
+ * Telemetry event callback type
+ * 
+ * @param event      Event data (borrowed, valid only during call)
+ * @param user_data  Opaque pointer from registration
+ */
+typedef void (*ftp_event_cb_t)(const ftp_event_t* event, void* user_data);
+
+/* ============================================================================
  * SECTION 5: ERROR CODE TAXONOMY
  * ============================================================================
  * 
@@ -518,6 +566,67 @@ FTP_API int32_t FTP_CALL ftp_set_retry_policy(
     uint64_t      base_delay_ms,
     uint64_t      max_delay_ms
 );
+
+/* ============================================================================
+ * SECTION 12: PHASE 7 OPTIMIZATION & OBSERVABILITY FUNCTIONS
+ * ============================================================================
+ *
+ * Rate limiting, telemetry callbacks, and optional features per Phase 7 Spec.
+ */
+
+/**
+ * Set bandwidth rate limit for transfers.
+ *
+ * Per Phase 7 Spec Section 5: Bandwidth Throttling
+ *
+ * @param handle            The client handle
+ * @param bytes_per_second  Maximum throughput (0 = unlimited)
+ * @param burst_bytes       Burst capacity (0 = default to 1 second of tokens)
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid
+ */
+FTP_API int32_t FTP_CALL ftp_set_rate_limit(
+    ftp_client_t* handle,
+    uint64_t      bytes_per_second,
+    uint64_t      burst_bytes
+);
+
+/**
+ * Set event callback for telemetry/observability.
+ *
+ * Per Phase 7 Spec Section 7: Observability & Telemetry Hooks
+ *
+ * @param handle     The client handle
+ * @param cb         Callback function (nullptr to disable)
+ * @param user_data  Opaque pointer passed to callback
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid
+ */
+FTP_API int32_t FTP_CALL ftp_set_event_callback(
+    ftp_client_t*        handle,
+    ftp_event_cb_t       cb,
+    void*                user_data
+);
+
+/**
+ * Set optional feature flags.
+ *
+ * Per Phase 7 Spec Section 4: io_uring Experimental Data Channel
+ *
+ * @param handle  The client handle
+ * @param option  Option name (e.g., FTP_OPT_USE_IOURING)
+ * @param value   Option value (0 or 1)
+ * @return FTP_OK on success, FTP_ERR_INVALID_HANDLE if handle is invalid,
+ *         FTP_ERR_INVALID_ARGUMENT if option unknown
+ */
+FTP_API int32_t FTP_CALL ftp_set_option(
+    ftp_client_t* handle,
+    int32_t       option,
+    int32_t       value
+);
+
+/* Option constants for ftp_set_option() */
+#define FTP_OPT_USE_IOURING     1  /* Enable io_uring data channel (Linux 5.1+) */
+#define FTP_OPT_USE_ZEROCOPY    2  /* Enable zero-copy sends (default: on) */
+#define FTP_OPT_USE_COMPRESSION 3  /* Enable MODE Z compression (default: off) */
 
 #ifdef __cplusplus
 }

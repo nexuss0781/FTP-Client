@@ -483,4 +483,89 @@ extern "C" int32_t ftp_set_retry_policy(
     }
 }
 
+/* ============================================================================
+ * SECTION 6.7: PHASE 7 OPTIMIZATION & OBSERVABILITY FUNCTIONS
+ * ============================================================================
+ */
+
+FTP_API int32_t FTP_CALL ftp_set_rate_limit(
+    ftp_client_t* handle,
+    uint64_t      bytes_per_second,
+    uint64_t      burst_bytes
+) {
+    if (!handle) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+
+    /* Store rate limit config in FtpClientImpl for use by TransferEngine */
+    impl->setRateLimit(bytes_per_second, burst_bytes);
+    
+    return FTP_OK;
+}
+
+FTP_API int32_t FTP_CALL ftp_set_event_callback(
+    ftp_client_t*        handle,
+    ftp_event_cb_t       cb,
+    void*                user_data
+) {
+    if (!handle) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+
+    /* Store callback in FtpClientImpl for use by TelemetryController */
+    impl->setEventCallback(cb, user_data);
+    
+    return FTP_OK;
+}
+
+FTP_API int32_t FTP_CALL ftp_set_option(
+    ftp_client_t* handle,
+    int32_t       option,
+    int32_t       value
+) {
+    if (!handle) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+
+    switch (option) {
+        case FTP_OPT_USE_IOURING:
+            /* io_uring is experimental and opt-in */
+            /* Store flag in FtpClientImpl config */
+            impl->getConfig().use_io_uring = (value != 0);
+            break;
+        case FTP_OPT_USE_ZEROCOPY:
+            /* Zero-copy enabled by default on supported platforms */
+            /* Store flag in FtpClientImpl config */
+            impl->getConfig().use_zerocopy = (value != 0);
+            break;
+        case FTP_OPT_USE_COMPRESSION:
+            /* MODE Z compression opt-in */
+            /* Store flag in FtpClientImpl config */
+            impl->getConfig().use_compression = (value != 0);
+            break;
+        default:
+            return FTP_ERR_INVALID_ARGUMENT;
+    }
+    
+    return FTP_OK;
+}
+
 } /* extern "C" */

@@ -134,6 +134,37 @@ static void test_configuration(void) {
     ret = ftp_set_timeout_command_ms(handle, 0);
     TEST_ASSERT("ftp_set_timeout_command_ms with 0 (default) succeeds", ret == FTP_OK);
     
+    /* Test Phase 7 functions */
+    ret = ftp_set_rate_limit(NULL, 1024*1024, 2*1024*1024);
+    TEST_ASSERT("ftp_set_rate_limit with NULL handle fails", ret == FTP_ERR_INVALID_HANDLE);
+    
+    ret = ftp_set_rate_limit(handle, 1024*1024, 2*1024*1024);
+    TEST_ASSERT("ftp_set_rate_limit with valid params succeeds", ret == FTP_OK);
+    
+    ret = ftp_set_rate_limit(handle, 0, 0);
+    TEST_ASSERT("ftp_set_rate_limit with 0 (unlimited) succeeds", ret == FTP_OK);
+    
+    ret = ftp_set_event_callback(NULL, NULL, NULL);
+    TEST_ASSERT("ftp_set_event_callback with NULL handle fails", ret == FTP_ERR_INVALID_HANDLE);
+    
+    ret = ftp_set_event_callback(handle, NULL, NULL);
+    TEST_ASSERT("ftp_set_event_callback with NULL callback succeeds", ret == FTP_OK);
+    
+    ret = ftp_set_option(NULL, FTP_OPT_USE_IOURING, 1);
+    TEST_ASSERT("ftp_set_option with NULL handle fails", ret == FTP_ERR_INVALID_HANDLE);
+    
+    ret = ftp_set_option(handle, FTP_OPT_USE_IOURING, 1);
+    TEST_ASSERT("ftp_set_option for IOURING succeeds", ret == FTP_OK);
+    
+    ret = ftp_set_option(handle, FTP_OPT_USE_ZEROCOPY, 0);
+    TEST_ASSERT("ftp_set_option for ZEROCOPY succeeds", ret == FTP_OK);
+    
+    ret = ftp_set_option(handle, FTP_OPT_USE_COMPRESSION, 1);
+    TEST_ASSERT("ftp_set_option for COMPRESSION succeeds", ret == FTP_OK);
+    
+    ret = ftp_set_option(handle, -1, 0);
+    TEST_ASSERT("ftp_set_option with invalid option fails", ret == FTP_ERR_INVALID_ARGUMENT);
+    
     ftp_client_destroy(handle);
 }
 
