@@ -15,7 +15,9 @@ ResultAggregator::ResultAggregator() = default;
 void ResultAggregator::record_result(const std::string& local_path,
                                       const std::string& remote_path,
                                       int32_t status,
-                                      uint64_t bytes_sent) {
+                                      uint64_t bytes_sent,
+                                      uint32_t attempt_count,
+                                      int32_t final_error) {
     /* Update counters atomically */
     if (status == 0) {  /* FTP_OK */
         files_success_.fetch_add(1, std::memory_order_relaxed);
@@ -41,6 +43,8 @@ void ResultAggregator::record_result(const std::string& local_path,
         result.remote_path = remote_path;
         result.status = status;
         result.bytes_sent = bytes_sent;
+        result.attempt_count = attempt_count;
+        result.final_error = final_error;
         results_.push_back(std::move(result));
     }
 }
