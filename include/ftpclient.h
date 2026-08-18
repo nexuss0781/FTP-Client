@@ -421,7 +421,39 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
 );
 
 /**
- * Free result resources allocated by ftp_upload_dir().
+ * Download one remote file through the protected passive data path when the
+ * authenticated control session is explicit FTPS. The local parent directory
+ * is created when necessary, the file is published only after a successful
+ * final 226/250 reply, and the result must be released with ftp_result_free().
+ *
+ * @param handle        Authenticated client handle
+ * @param local_path    UTF-8 destination file path
+ * @param remote_path   UTF-8 remote file path
+ * @param progress_cb   Nullable progress callback
+ * @param user_data     Opaque pointer passed to progress_cb
+ * @param out_result    Nullable caller-owned result structure
+ * @return FTP_OK only after local publication and positive final reply
+ */
+FTP_API int32_t FTP_CALL ftp_download_file(
+    ftp_client_t*       handle,
+    const char*         local_path,
+    const char*         remote_path,
+    ftp_progress_cb_t   progress_cb,
+    void*               user_data,
+    ftp_result_t*       out_result
+);
+
+/** Execute serialized remote filesystem operations on an authenticated session. */
+FTP_API int32_t FTP_CALL ftp_change_directory(ftp_client_t* handle, const char* remote_path);
+FTP_API int32_t FTP_CALL ftp_parent_directory(ftp_client_t* handle);
+FTP_API int32_t FTP_CALL ftp_delete_remote_file(ftp_client_t* handle, const char* remote_path);
+FTP_API int32_t FTP_CALL ftp_remove_remote_directory(ftp_client_t* handle, const char* remote_path);
+FTP_API int32_t FTP_CALL ftp_rename_remote(ftp_client_t* handle,
+                                           const char* from_path,
+                                           const char* to_path);
+
+/**
+ * Free result resources allocated by ftp_upload_dir() or ftp_download_file().
  * 
  * Per Phase 4 Spec Section 9.2 - Memory Ownership Amendment
  * 
