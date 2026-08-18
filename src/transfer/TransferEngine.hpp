@@ -13,6 +13,7 @@
 #include "ResultAggregator.hpp"
 #include "Task.hpp"
 #include "../protocol/ProtocolEngine.hpp"
+#include "../resilience/RetryPolicy.hpp"
 #include <functional>
 #include <chrono>
 
@@ -36,12 +37,18 @@ struct TransferConfig {
     int32_t resume_enabled;         /* 0=overwrite, 1=resume partial */
     int32_t create_remote_dirs;     /* 0=fail if missing, 1=auto-create */
     uint32_t buffer_size;           /* Buffer size in bytes */
+    uint32_t retry_attempts;        /* Retry count after initial attempt */
+    uint64_t retry_base_delay_ms;   /* Backoff base */
+    uint64_t retry_max_delay_ms;    /* Backoff cap */
     
     TransferConfig()
         : max_parallel(0)
         , resume_enabled(0)
         , create_remote_dirs(1)
         , buffer_size(256 * 1024)
+        , retry_attempts(3)
+        , retry_base_delay_ms(1000)
+        , retry_max_delay_ms(30000)
     {}
 };
 
@@ -106,6 +113,14 @@ public:
         ftp_progress_cb_t progress_cb,
         void* progress_user_data
     );
+
+    /** Upload one regular file through the same M4 orchestration path. */
+    int32_t upload_single_file(
+        const std::string& local_path,
+        const std::string& remote_path,
+        ftp_progress_cb_t progress_cb,
+        void* progress_user_data
+    );
     
     /**
      * Get result aggregator for post-upload statistics
@@ -129,6 +144,7 @@ private:
     
     std::atomic<bool> cancel_flag_{false};
     std::mutex control_mutex_;  /* For control channel access */
+    resilience::RetryPolicy retry_policy_;
     
     /**
      * Worker function for upload tasks
