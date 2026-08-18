@@ -67,10 +67,13 @@ struct ClientConfig {
     uint64_t rate_limit_bps;      /* Default: 0 - unlimited */
     uint64_t rate_limit_burst;    /* Default: 0 - no burst */
 
+    /* M8 transfer safety defaults */
+    uint32_t stall_timeout_ms;    /* Default: 0 - disabled unless requested */
+
     ClientConfig() : buffer_size(256 * 1024), timeout_connect(5000), timeout_command(30000),
                      retry_max_attempts(3), retry_base_delay_ms(1000), retry_max_delay_ms(30000),
                      use_io_uring(false), use_zerocopy(true), use_compression(false),
-                     rate_limit_bps(0), rate_limit_burst(0) {}
+                     rate_limit_bps(0), rate_limit_burst(0), stall_timeout_ms(0) {}
 };
 
 /**
@@ -166,6 +169,13 @@ public:
     void setEventCallback(ftp_event_cb_t cb, void* user_data);
     
     /**
+     * Shared cancellation token for the active synchronous transfer.
+     */
+    std::shared_ptr<std::atomic<bool>> getCancelToken() { return cancel_token_; }
+    void clearCancellation() { cancel_token_->store(false, std::memory_order_release); }
+    void requestCancellation() { cancel_token_->store(true, std::memory_order_release); }
+
+    /**
      * Get telemetry event callback
      */
     ftp_event_cb_t getEventCallback() const { return event_callback_; }
@@ -202,6 +212,7 @@ private:
     std::vector<std::string> cert_pins_;
     ftp_event_cb_t event_callback_;
     void* event_callback_userdata_;
+    std::shared_ptr<std::atomic<bool>> cancel_token_;
     std::mutex mutex_;  /* For future thread-safety extensions */
 };
 
@@ -213,6 +224,7 @@ inline FtpClientImpl::FtpClientImpl()
     , cert_callback_userdata_(nullptr)
     , event_callback_(nullptr)
     , event_callback_userdata_(nullptr)
+    , cancel_token_(std::make_shared<std::atomic<bool>>(false))
 {
 }
 

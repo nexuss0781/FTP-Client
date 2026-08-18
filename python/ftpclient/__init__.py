@@ -15,7 +15,9 @@ from ftpclient._core import (
 from ftpclient.types import (
     Credentials,
     UploadOptions,
+    DownloadOptions,
     UploadResult,
+    DownloadResult,
     FileResult,
 )
 from ftpclient.exceptions import (
@@ -38,7 +40,9 @@ try:
         'AsyncFTPClient',
         'Credentials',
         'UploadOptions',
+        'DownloadOptions',
         'UploadResult',
+        'DownloadResult',
         'FileResult',
         'FTPError',
         'FTPAuthError',
@@ -54,7 +58,9 @@ except ImportError:
         'FTPClient',
         'Credentials',
         'UploadOptions',
+        'DownloadOptions',
         'UploadResult',
+        'DownloadResult',
         'FileResult',
         'FTPError',
         'FTPAuthError',

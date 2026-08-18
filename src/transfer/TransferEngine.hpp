@@ -18,6 +18,7 @@
 #include <chrono>
 #include <memory>
 #include <vector>
+#include <atomic>
 
 namespace ftpclient { namespace transfer {
 
@@ -42,6 +43,10 @@ struct TransferConfig {
     uint32_t retry_attempts;        /* Retry count after initial attempt */
     uint64_t retry_base_delay_ms;   /* Backoff base */
     uint64_t retry_max_delay_ms;    /* Backoff cap */
+    uint32_t stall_timeout_ms;      /* 0 = disabled */
+    int32_t resume_metadata_enabled;/* 1 = only resume same source fingerprint */
+    std::string expected_sha256;    /* Optional source digest */
+    std::shared_ptr<std::atomic<bool>> cancel_token;
     
     TransferConfig()
         : max_parallel(0)
@@ -51,6 +56,10 @@ struct TransferConfig {
         , retry_attempts(3)
         , retry_base_delay_ms(1000)
         , retry_max_delay_ms(30000)
+        , stall_timeout_ms(0)
+        , resume_metadata_enabled(0)
+        , expected_sha256()
+        , cancel_token(std::make_shared<std::atomic<bool>>(false))
     {}
 };
 

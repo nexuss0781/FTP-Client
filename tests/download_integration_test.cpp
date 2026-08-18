@@ -101,9 +101,10 @@ int make_listener(uint16_t& port) {
 class MockDownloadServer {
 public:
     MockDownloadServer(bool tls, bool reject_epsv, bool negative_final,
-                       std::string payload)
+                       std::string payload, bool stall_data = false)
         : tls_(tls), reject_epsv_(reject_epsv), negative_final_(negative_final),
-          payload_(std::move(payload)), listen_fd_(-1), port_(0), worker_() {}
+          payload_(std::move(payload)), stall_data_(stall_data), listen_fd_(-1),
+          port_(0), worker_() {}
 
     bool start() {
         listen_fd_ = make_listener(port_);
@@ -146,6 +147,9 @@ private:
         if (data_fd < 0) return false;
 
         bool ok = true;
+        if (stall_data_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        }
         if (tls_) {
             SSL* data_ssl = SSL_new(context);
             if (data_ssl == nullptr) {
@@ -310,6 +314,7 @@ private:
     bool reject_epsv_;
     bool negative_final_;
     std::string payload_;
+    bool stall_data_;
     int listen_fd_;
     uint16_t port_;
     std::thread worker_;
@@ -323,8 +328,11 @@ bool check(bool condition, const char* label) {
 
 bool run_download(bool tls, bool reject_epsv, bool negative_final,
                   const std::string& payload, const char* remote_path,
-                  const char* local_path) {
-    MockDownloadServer server(tls, reject_epsv, negative_final, payload);
+                  const char* local_path,
+                  const char* expected_sha256 = nullptr,
+                  bool stall_data = false,
+                  uint32_t stall_timeout_ms = 0) {
+    MockDownloadServer server(tls, reject_epsv, negative_final, payload, stall_data);
     bool ok = check(server.start(), tls ? "M7 FTPS download server starts"
                                          : "M7 plain download server starts");
     if (!ok) return false;
@@ -351,9 +359,20 @@ bool run_download(bool tls, bool reject_epsv, bool negative_final,
                 "M7 download control connection succeeds");
 
     ftp_result_t result{};
-    int32_t ret = ftp_download_file(client, local_path, remote_path,
-                                    nullptr, nullptr, &result);
-    if (negative_final) {
+    ftp_download_options_t options{};
+    options.struct_size = sizeof(options);
+    options.stall_timeout_ms = stall_timeout_ms;
+    options.expected_sha256 = expected_sha256;
+    int32_t ret = (expected_sha256 != nullptr || stall_timeout_ms != 0)
+        ? ftp_download_file_ex(client, local_path, remote_path, &options,
+                               nullptr, nullptr, &result)
+        : ftp_download_file(client, local_path, remote_path,
+                            nullptr, nullptr, &result);
+    if (stall_data) {
+        ok &= check(ret == FTP_ERR_STALLED, "M8 stalled download returns stall error");
+        ok &= check(!std::ifstream(local_path).good(),
+                    "M8 stalled transfer does not publish a local file");
+    } else if (negative_final) {
         ok &= check(ret != FTP_OK, "M7 negative final reply fails download");
         ok &= check(result.files_failed == 1 && result.files_success == 0,
                     "M7 negative result is accurate");
@@ -378,6 +397,48 @@ bool run_download(bool tls, bool reject_epsv, bool negative_final,
     return ok;
 }
 
+bool run_cancelled_download() {
+    MockDownloadServer server(false, false, false, "cancel-payload", true);
+    bool ok = check(server.start(), "M8 cancellation server starts");
+    if (!ok) return false;
+
+    const char* local_path = "/tmp/ftpclient_m8/cancelled.bin";
+    ::unlink(local_path);
+    ftp_client_t* client = nullptr;
+    ok &= check(ftp_client_create(&client) == FTP_OK, "M8 cancellation client creates");
+    ftp_credentials_t creds{};
+    creds.host = "localhost";
+    creds.port = server.port();
+    creds.username = "m7-user";
+    creds.password = "m7-password";
+    creds.use_tls = FTP_TLS_NONE;
+    creds.verify_cert = FTP_VERIFY_NONE;
+    ok &= check(ftp_connect(client, &creds) == FTP_OK,
+                "M8 cancellation control connection succeeds");
+
+    ftp_download_options_t options{};
+    options.struct_size = sizeof(options);
+    options.stall_timeout_ms = 200;
+    ftp_result_t result{};
+    int32_t transfer_status = FTP_ERR_SYSTEM;
+    std::thread transfer([&]() {
+        transfer_status = ftp_download_file_ex(client, local_path, "m7-remote.bin",
+                                               &options, nullptr, nullptr, &result);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ok &= check(ftp_cancel(client) == FTP_OK, "M8 cancellation request accepted");
+    transfer.join();
+    ok &= check(transfer_status == FTP_ERR_CANCELLED,
+                "M8 stalled download returns cancellation error");
+    ok &= check(!std::ifstream(local_path).good(),
+                "M8 cancelled download does not publish a local file");
+    ok &= check(ftp_result_free(&result) == FTP_OK, "M8 cancellation result frees");
+    ok &= check(ftp_disconnect(client) == FTP_OK, "M8 cancellation disconnects");
+    ok &= check(ftp_client_destroy(client) == FTP_OK, "M8 cancellation client destroys");
+    ::unlink(local_path);
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -386,11 +447,15 @@ int main() {
     const std::string payload = std::string("M7 binary", 9) + char(0) +
                                  std::string("payload\nsecond line", 19) + char(0xff);
     ok &= run_download(false, false, false, payload, "m7-remote.bin",
-                       "/tmp/ftpclient_m7/plain/nested.bin");
+                       "/tmp/ftpclient_m7/plain/nested.bin",
+                       "fd18a0dc64b5fd8d05bc01e32f3590ab5af0fb8f0606bd54e05fe5b9b806049c");
     ok &= run_download(true, true, false, "", "m7-empty.bin",
                        "/tmp/ftpclient_m7/ftps/empty.bin");
     ok &= run_download(false, false, true, "failed-payload", "m7-negative.bin",
                        "/tmp/ftpclient_m7/negative.bin");
+    ok &= run_download(false, false, false, "stall-payload", "m7-remote.bin",
+                       "/tmp/ftpclient_m8/stalled.bin", nullptr, true, 200);
+    ok &= run_cancelled_download();
     return ok ? 0 : 1;
 }
 #endif
