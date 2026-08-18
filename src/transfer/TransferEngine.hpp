@@ -16,6 +16,8 @@
 #include "../resilience/RetryPolicy.hpp"
 #include <functional>
 #include <chrono>
+#include <memory>
+#include <vector>
 
 namespace ftpclient { namespace transfer {
 
@@ -138,6 +140,7 @@ public:
 private:
     protocol::ProtocolEngine& protocol_engine_;
     TransferConfig config_;
+    std::vector<std::unique_ptr<protocol::ProtocolEngine>> worker_sessions_;
     ThreadPool thread_pool_;
     BufferPool buffer_pool_;
     ResultAggregator result_aggregator_;
@@ -150,7 +153,7 @@ private:
      * Worker function for upload tasks
      */
     void execute_upload_task(Task& task, protocol::ProtocolEngine* session = nullptr);
-    void execute_worker_task(Task& task);
+    void execute_worker_task(Task& task, uint32_t worker_id);
     
     /**
      * Worker function for mkdir tasks

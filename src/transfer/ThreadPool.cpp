@@ -29,7 +29,7 @@ ThreadPool::ThreadPool(const ThreadPoolConfig& config) {
     /* Start worker threads */
     workers_.reserve(worker_count);
     for (uint32_t i = 0; i < worker_count; ++i) {
-        workers_.emplace_back(&ThreadPool::worker_loop, this);
+        workers_.emplace_back(&ThreadPool::worker_loop, this, i);
     }
 }
 
@@ -77,7 +77,7 @@ void ThreadPool::wait_for_all() {
     });
 }
 
-void ThreadPool::worker_loop() {
+void ThreadPool::worker_loop(uint32_t worker_id) {
     while (true) {
         Task task;
         
@@ -110,7 +110,7 @@ void ThreadPool::worker_loop() {
                 callback = worker_callback_;
             }
             if (callback) {
-                callback(task);
+                callback(task, worker_id);
             }
         } catch (...) {
             /* Keep the pool live and make an unhandled task failure visible. */
