@@ -280,6 +280,7 @@ bool test_nested_multi_file_upload() {
     ftp_upload_options_t options{};
     options.struct_size = sizeof(options);
     options.retry_attempts = 0;
+    options.max_parallel = 1;
     options.create_remote_dirs = 1;
     ftp_result_t result{};
     int32_t ret = ftp_upload_dir(client, root.c_str(), "deploy", &options,

@@ -55,7 +55,12 @@ void ResultAggregator::add_bytes_transferred(uint64_t bytes) {
 
 std::vector<FileResult> ResultAggregator::get_results() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return results_;
+    auto results = results_;
+    std::sort(results.begin(), results.end(), [](const FileResult& left,
+                                                 const FileResult& right) {
+        return left.remote_path < right.remote_path;
+    });
+    return results;
 }
 
 void ResultAggregator::clear() {
