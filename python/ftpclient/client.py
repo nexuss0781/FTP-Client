@@ -31,12 +31,26 @@ from ftpclient._core import (
     ftp_verify_local_file_with_remote_hash,
 )
 from ftpclient.types import (
-    Credentials, UploadOptions, DownloadDigest, DownloadOptions, UploadResult, DownloadResult, FileResult
+    Credentials, UploadOptions, DownloadDigest, DownloadOptions, UploadResult,
+    DownloadResult, FileResult, VerificationMetadata
 )
 from ftpclient.exceptions import FTPError, FTPConfigError
 
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_verification(file_result: Any) -> VerificationMetadata:
+    """Decode owned C ABI verification provenance before freeing the result."""
+    def decode_string(value: Any) -> Optional[str]:
+        return ffi.string(value).decode("ascii") if value != ffi.NULL else None
+    return VerificationMetadata(
+        status=int(file_result.verification_status),
+        sources=int(file_result.verification_sources),
+        algorithm=decode_string(file_result.verification_algorithm),
+        local_digest=decode_string(file_result.local_digest),
+        remote_digest=decode_string(file_result.remote_digest),
+    )
 
 
 # ============================================================================
@@ -403,7 +417,8 @@ class FTPClient:
                     status=int(fr.status),
                     bytes_sent=int(fr.bytes_sent),
                     attempt_count=int(fr.attempt_count),
-                    final_error=int(fr.final_error) if fr.final_error != 0 else None
+                    final_error=int(fr.final_error) if fr.final_error != 0 else None,
+                    verification=_decode_verification(fr)
                 ))
         
         # Create Python result
@@ -443,6 +458,8 @@ class FTPClient:
         c_options.resume_enabled = 1 if options.resume_enabled else 0
         c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
         c_options.resume_allow_unverified = 1 if options.resume_allow_unverified else 0
+        c_options.verify_remote_hash = 1 if options.verify_remote_hash else 0
+        c_options.max_parallel = options.max_parallel
         progress_cb = ffi.NULL
         progress_cb_id = None
         if progress is not None:
@@ -468,6 +485,7 @@ class FTPClient:
                     bytes_sent=int(fr.bytes_sent),
                     attempt_count=int(fr.attempt_count),
                     final_error=int(fr.final_error) if fr.final_error != 0 else None,
+                    verification=_decode_verification(fr),
                 ))
         result = DownloadResult(
             status=int(result_ptr.status),
@@ -502,6 +520,8 @@ class FTPClient:
         c_options.resume_enabled = 1 if options.resume_enabled else 0
         c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
         c_options.resume_allow_unverified = 1 if options.resume_allow_unverified else 0
+        c_options.verify_remote_hash = 1 if options.verify_remote_hash else 0
+        c_options.max_parallel = options.max_parallel
         digest_array = ffi.NULL
         digest_strings = []
         if options.file_digests:
@@ -539,6 +559,7 @@ class FTPClient:
                     status=int(fr.status), bytes_sent=int(fr.bytes_sent),
                     attempt_count=int(fr.attempt_count),
                     final_error=int(fr.final_error) if fr.final_error != 0 else None,
+                    verification=_decode_verification(fr),
                 ))
         result = DownloadResult(
             status=int(result_ptr.status), files_total=int(result_ptr.files_total),

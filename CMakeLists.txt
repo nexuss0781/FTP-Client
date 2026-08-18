@@ -119,6 +119,7 @@ set(FTP_TRANSFER_HEADERS
     src/transfer/BufferPool.hpp
     src/transfer/ThreadPool.hpp
     src/transfer/ResultAggregator.hpp
+    src/transfer/Verification.hpp
     src/transfer/TransferEngine.hpp
 )
 
@@ -363,6 +364,16 @@ set_target_properties(m11_server_features_integration_test PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 add_test(NAME m11_server_features_integration_test COMMAND m11_server_features_integration_test)
+
+# M12 remote HASH verification and bounded parallel directory-download test
+add_executable(m12_download_verification_integration_test tests/m12_download_verification_integration_test.cpp)
+target_include_directories(m12_download_verification_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(m12_download_verification_integration_test PRIVATE ftpclient pthread)
+set_target_properties(m12_download_verification_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME m12_download_verification_integration_test COMMAND m12_download_verification_integration_test)
 
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)

@@ -35,6 +35,11 @@ typedef void (*ftp_progress_cb_t)(
 /**
  * Transfer Engine Configuration
  */
+struct DownloadManifestEntry {
+    protocol::FileManifestEntry entry;
+    std::string expected_sha256;
+};
+
 struct TransferConfig {
     uint32_t max_parallel;          /* Max concurrent uploads (0=default 4) */
     int32_t resume_enabled;         /* 0=overwrite, 1=resume partial */
@@ -45,7 +50,9 @@ struct TransferConfig {
     uint64_t retry_max_delay_ms;    /* Backoff cap */
     uint32_t stall_timeout_ms;      /* 0 = disabled */
     int32_t resume_metadata_enabled;/* 1 = only resume same source fingerprint */
+    int32_t resume_allow_unverified; /* 1 = explicit legacy unsafe resume */
     std::string expected_sha256;    /* Optional source digest */
+    bool verify_remote_hash;        /* M12: verify RETR with server HASH */
     std::shared_ptr<std::atomic<bool>> cancel_token;
     
     TransferConfig()
@@ -58,7 +65,9 @@ struct TransferConfig {
         , retry_max_delay_ms(30000)
         , stall_timeout_ms(0)
         , resume_metadata_enabled(0)
+        , resume_allow_unverified(0)
         , expected_sha256()
+        , verify_remote_hash(false)
         , cancel_token(std::make_shared<std::atomic<bool>>(false))
     {}
 };
@@ -132,6 +141,12 @@ public:
         ftp_progress_cb_t progress_cb,
         void* progress_user_data
     );
+
+    int32_t download_directory(
+        const std::vector<DownloadManifestEntry>& files,
+        ftp_progress_cb_t progress_cb,
+        void* progress_user_data
+    );
     
     /**
      * Get result aggregator for post-upload statistics
@@ -162,6 +177,7 @@ private:
      * Worker function for upload tasks
      */
     void execute_upload_task(Task& task, protocol::ProtocolEngine* session = nullptr);
+    void execute_download_task(Task& task, protocol::ProtocolEngine* session = nullptr);
     void execute_worker_task(Task& task, uint32_t worker_id);
     
     /**

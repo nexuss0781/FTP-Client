@@ -59,6 +59,19 @@ class DownloadDigest:
 
 
 @dataclass(frozen=True)
+class VerificationMetadata:
+    status: int
+    sources: int
+    algorithm: Optional[str]
+    local_digest: Optional[str]
+    remote_digest: Optional[str]
+    @property
+    def passed(self) -> bool: ...
+    @property
+    def unavailable(self) -> bool: ...
+
+
+@dataclass(frozen=True)
 class DownloadOptions:
     expected_sha256: Optional[str]
     stall_timeout_ms: int
@@ -66,6 +79,8 @@ class DownloadOptions:
     resume_metadata_enabled: bool
     file_digests: Tuple[DownloadDigest, ...]
     resume_allow_unverified: bool
+    verify_remote_hash: bool
+    max_parallel: int
 
 
 @dataclass(frozen=True)
@@ -76,6 +91,7 @@ class FileResult:
     bytes_sent: int
     attempt_count: int
     final_error: Optional[int]
+    verification: VerificationMetadata
 
 
 @dataclass(frozen=True)

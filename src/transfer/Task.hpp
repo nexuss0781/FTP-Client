@@ -11,6 +11,7 @@
 #include <string>
 #include <atomic>
 #include <cstdint>
+#include "Verification.hpp"
 
 namespace ftpclient { namespace transfer {
 
@@ -20,7 +21,8 @@ namespace ftpclient { namespace transfer {
  */
 enum class TaskType : int32_t {
     MKDIR = 0,
-    UPLOAD_FILE = 1
+    UPLOAD_FILE = 1,
+    DOWNLOAD_FILE = 2
 };
 
 /**
@@ -36,6 +38,7 @@ struct Task {
     /* For UPLOAD_FILE */
     std::string local_path;             /* Local file path (UTF-8) */
     std::string remote_path;            /* Remote file path (forward-slash separated) */
+    std::string expected_sha256;
     uint64_t file_size;                 /* File size in bytes */
     
     /* For MKDIR */
@@ -51,6 +54,7 @@ struct Task {
     /* Result tracking */
     int32_t result_status;              /* FTP_OK or error code */
     uint64_t bytes_sent;                /* Bytes successfully transferred */
+    VerificationMetadata verification;
     
     Task() 
         : type(TaskType::MKDIR)
@@ -60,12 +64,14 @@ struct Task {
         , progress_user_data(nullptr)
         , result_status(0)
         , bytes_sent(0)
+        , verification()
     {}
     
     Task(Task&& other) noexcept
         : type(other.type)
         , local_path(std::move(other.local_path))
         , remote_path(std::move(other.remote_path))
+        , expected_sha256(std::move(other.expected_sha256))
         , file_size(other.file_size)
         , remote_dir(std::move(other.remote_dir))
         , completion_counter(other.completion_counter)
@@ -73,6 +79,7 @@ struct Task {
         , progress_user_data(other.progress_user_data)
         , result_status(other.result_status)
         , bytes_sent(other.bytes_sent)
+        , verification(std::move(other.verification))
     {
         other.completion_counter = nullptr;
         other.progress_cb = nullptr;
@@ -84,6 +91,7 @@ struct Task {
             type = other.type;
             local_path = std::move(other.local_path);
             remote_path = std::move(other.remote_path);
+            expected_sha256 = std::move(other.expected_sha256);
             file_size = other.file_size;
             remote_dir = std::move(other.remote_dir);
             completion_counter = other.completion_counter;
@@ -91,6 +99,7 @@ struct Task {
             progress_user_data = other.progress_user_data;
             result_status = other.result_status;
             bytes_sent = other.bytes_sent;
+            verification = std::move(other.verification);
             
             other.completion_counter = nullptr;
             other.progress_cb = nullptr;
