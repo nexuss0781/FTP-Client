@@ -26,6 +26,22 @@ def test_server_capabilities_dataclass():
     return True
 
 
+def test_verification_metadata_dataclass():
+    """Test M12 verification provenance properties and download controls."""
+    print("Testing VerificationMetadata dataclass...")
+    from ftpclient.types import VerificationMetadata, DownloadOptions
+    passed = VerificationMetadata(1, 3, "SHA-256", "a" * 64, "b" * 64)
+    assert passed.passed is True
+    assert passed.unavailable is False
+    unavailable = VerificationMetadata(3, 1)
+    assert unavailable.unavailable is True
+    options = DownloadOptions(verify_remote_hash=True, max_parallel=2)
+    assert options.verify_remote_hash is True
+    assert options.max_parallel == 2
+    print("[PASS] VerificationMetadata and M12 DownloadOptions work correctly")
+    return True
+
+
 def test_credentials_dataclass():
     """Test Credentials dataclass."""
     print("Testing Credentials dataclass...")
@@ -249,6 +265,7 @@ if __name__ == "__main__":
     
     try:
         results.append(test_server_capabilities_dataclass())
+        results.append(test_verification_metadata_dataclass())
         results.append(test_credentials_dataclass())
         results.append(test_upload_options_dataclass())
         results.append(test_download_digest_dataclass())

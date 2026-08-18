@@ -128,18 +128,40 @@ class DownloadDigest:
 
 
 @dataclass(frozen=True)
+class VerificationMetadata:
+    """Provenance of per-file local and server-side integrity verification."""
+    status: int = 0
+    sources: int = 0
+    algorithm: Optional[str] = None
+    local_digest: Optional[str] = None
+    remote_digest: Optional[str] = None
+
+    @property
+    def passed(self) -> bool:
+        return self.status == 1
+
+    @property
+    def unavailable(self) -> bool:
+        return self.status == 3
+
+
+@dataclass(frozen=True)
 class DownloadOptions:
-    """Integrity, stall, and durable-resume controls for one remote-file download."""
+    """Integrity, stall, durable-resume, and parallel-download controls."""
     expected_sha256: Optional[str] = None
     stall_timeout_ms: int = 0
     resume_enabled: bool = False
     resume_metadata_enabled: bool = True
     file_digests: Tuple[DownloadDigest, ...] = ()
     resume_allow_unverified: bool = False
+    verify_remote_hash: bool = False
+    max_parallel: int = 1
 
     def __post_init__(self) -> None:
         if self.stall_timeout_ms < 0:
             raise ValueError(f"stall_timeout_ms must be >= 0, got {self.stall_timeout_ms}")
+        if self.max_parallel < 0:
+            raise ValueError(f"max_parallel must be >= 0, got {self.max_parallel}")
         if self.expected_sha256 is not None:
             digest = self.expected_sha256.replace(":", "").lower()
             if not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -167,6 +189,7 @@ class FileResult:
     bytes_sent: int
     attempt_count: int = 1
     final_error: Optional[int] = None
+    verification: VerificationMetadata = field(default_factory=VerificationMetadata)
 
 
 @dataclass(frozen=True)

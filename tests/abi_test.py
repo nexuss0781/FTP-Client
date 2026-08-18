@@ -115,9 +115,9 @@ class FtpDownloadOptions(ctypes.Structure):
         ("file_digests", ctypes.POINTER(FtpDownloadDigest)),
         ("file_digest_count", ctypes.c_uint32),
         ("resume_allow_unverified", ctypes.c_int32),
+        ("verify_remote_hash", ctypes.c_int32),
+        ("max_parallel", ctypes.c_int32),
     ]
-
-
 class FtpFileResult(ctypes.Structure):
     """ftp_file_result_t structure."""
     _fields_ = [
@@ -127,9 +127,12 @@ class FtpFileResult(ctypes.Structure):
         ("bytes_sent", ctypes.c_uint64),
         ("attempt_count", ctypes.c_uint32),
         ("final_error", ctypes.c_int32),
+        ("verification_status", ctypes.c_uint32),
+        ("verification_sources", ctypes.c_uint32),
+        ("verification_algorithm", ctypes.c_char_p),
+        ("local_digest", ctypes.c_char_p),
+        ("remote_digest", ctypes.c_char_p),
     ]
-
-
 class FtpResult(ctypes.Structure):
     """ftp_result_t structure."""
     _fields_ = [
