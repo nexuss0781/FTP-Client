@@ -80,7 +80,8 @@ enum class FtpCommand : int32_t {
     XPWD = 31,      // Extended print working directory
     XCWD = 32,      // Extended change working directory
     XMKD = 33,      // Extended make directory
-    XRMD = 34       // Extended remove directory
+    XRMD = 34,      // Extended remove directory
+    MLSD = 35       // Machine-readable directory listing
 };
 
 /**
@@ -277,6 +278,7 @@ private:
                 break;
             case FtpCommand::LIST:
             case FtpCommand::NLST:
+            case FtpCommand::MLSD:
             case FtpCommand::RETR:
             case FtpCommand::STOR:
             case FtpCommand::APPE:
@@ -320,8 +322,8 @@ private:
     
     TransitionResult handle_data_connecting(FtpCommand cmd, uint16_t /*reply_code*/) {
         if (cmd == FtpCommand::LIST || cmd == FtpCommand::NLST ||
-            cmd == FtpCommand::RETR || cmd == FtpCommand::STOR ||
-            cmd == FtpCommand::APPE) {
+            cmd == FtpCommand::MLSD || cmd == FtpCommand::RETR ||
+            cmd == FtpCommand::STOR || cmd == FtpCommand::APPE) {
             state_ = ProtocolState::DATA_TRANSFERRING;
             return TransitionResult::SUCCESS;
         }
@@ -334,7 +336,8 @@ private:
     
     TransitionResult handle_data_transferring(FtpCommand cmd, uint16_t reply_code) {
         // A final reply is received after the data socket has closed.
-        if ((cmd == FtpCommand::LIST || cmd == FtpCommand::RETR ||
+        if ((cmd == FtpCommand::LIST || cmd == FtpCommand::NLST ||
+             cmd == FtpCommand::MLSD || cmd == FtpCommand::RETR ||
              cmd == FtpCommand::STOR || cmd == FtpCommand::APPE) &&
             (reply_code == 226 || reply_code == 250)) {
             state_ = ProtocolState::AUTHENTICATED;
@@ -345,7 +348,8 @@ private:
     }
     
     TransitionResult handle_data_finalizing(FtpCommand cmd, uint16_t reply_code) {
-        if (cmd == FtpCommand::LIST || cmd == FtpCommand::RETR || 
+        if (cmd == FtpCommand::LIST || cmd == FtpCommand::NLST ||
+            cmd == FtpCommand::MLSD || cmd == FtpCommand::RETR ||
             cmd == FtpCommand::STOR || cmd == FtpCommand::APPE) {
             if (reply_code == 226 || reply_code == 250) {
                 state_ = ProtocolState::AUTHENTICATED;
