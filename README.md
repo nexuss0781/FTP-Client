@@ -1,14 +1,14 @@
 # FTP Client Library
 
-**High-Performance, Production-Grade FTP Client — C++ Core with Python Bindings**
+**FTPS Client Library — C++ Core with Python Bindings (M0 Development Baseline)**
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/yourorg/ftpclient)
+[![Version](https://img.shields.io/badge/version-0.1.0--prealpha-orange)](https://github.com/yourorg/ftpclient)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![C++](https://img.shields.io/badge/C++-17-orange)](https://isocpp.org/)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](SUPPORT)
 
-A **zero-copy, TLS-hardened, concurrent FTP client** engineered for unattended batch operations at scale. Built on a frozen C ABI for language-agnostic consumption, with first-class Python bindings via `cffi`.
+A **development-stage FTPS client foundation** engineered for a stable C ABI, protocol correctness, and future unattended batch operations. The current M0 baseline contains protocol, TLS, transfer, resilience, and Python-binding scaffolding; real public connection and file-transfer operations are not yet complete.
 
 ---
 
@@ -34,26 +34,43 @@ A **zero-copy, TLS-hardened, concurrent FTP client** engineered for unattended b
 
 ---
 
+> **M0 status notice:** This repository is not a production release. `ftp_connect()` currently validates and stores credentials without establishing a real public network session, `ftp_ping()` does not yet issue a server `NOOP`, and `ftp_upload_dir()` remains a stub. The capability table and examples below describe the target design unless explicitly marked as implemented.
+
+### M0 capability status
+
+| Capability | M0 status | Meaning |
+|---|---|---|
+| C ABI and opaque handles | Implemented foundation | Header and lifecycle scaffolding exist and are tested |
+| Directory walking and parsing | Partially implemented | Local traversal and protocol parsing have unit coverage |
+| FTPS control connection | Not wired to public API | TLS components exist but are not connected to `ftp_connect()` |
+| Protected data transfer | Not implemented | No production `STOR`/`RETR` path yet |
+| Resume and integrity | Not implemented in public path | Capability must not be advertised yet |
+| Concurrent uploads | Not implemented in public path | Transfer worker integration remains pending |
+| Python binding | Development-stage | Wrapper exists but callback/error paths still require hardening |
+| Telemetry and resilience | Scaffolding | Unit-level components exist; public transfer integration is pending |
+
 ## Why This Library?
 
 | Capability | `ftplib` | `lftp` | **This Library** |
 |-----------|----------|--------|----------------|
-| **Zero-Copy I/O** | ❌ | ✅ Linux | ✅ Linux, Windows, macOS |
-| **TLS 1.3 with Pinning** | ❌ | ⚠️ Basic | ✅ Full chain + SPKI pinning |
-| **Concurrent Uploads** | ❌ | ✅ | ✅ Configurable thread pool |
-| **Circuit Breaker** | ❌ | ❌ | ✅ Per-host automatic |
-| **Exponential Backoff + Jitter** | ❌ | ⚠️ Fixed | ✅ Full jitter, configurable |
-| **Python `cffi` Bindings** | Native only | ❌ | ✅ GIL-aware, typed |
-| **Telemetry Hooks** | ❌ | ❌ | ✅ OpenTelemetry-ready |
-| **MODE Z Compression** | ❌ | ✅ | ✅ On-the-fly deflate |
-| **Rate Limiting** | ❌ | ✅ | ✅ Token bucket per-transfer |
-| **Secure Memory (Locked Pages)** | ❌ | ❌ | ✅ `mlock` + core-dump exclusion |
+| **Zero-Copy I/O** | ❌ | ✅ Linux | Planned; not validated in M0 |
+| **TLS 1.3 with Pinning** | ❌ | ⚠️ Basic | Planned; TLS path not wired in M0 |
+| **Concurrent Uploads** | ❌ | ✅ | Planned; transfer path not wired in M0 |
+| **Circuit Breaker** | ❌ | ❌ | Scaffolding; not integrated in M0 |
+| **Exponential Backoff + Jitter** | ❌ | ⚠️ Fixed | Scaffolding; not integrated in M0 |
+| **Python `cffi` Bindings** | Native only | ❌ | Development-stage wrapper |
+| **Telemetry Hooks** | ❌ | ❌ | Scaffolding; not integrated in M0 |
+| **MODE Z Compression** | ❌ | ✅ | Planned; not validated in M0 |
+| **Rate Limiting** | ❌ | ✅ | Scaffolding; not integrated in M0 |
+| **Secure Memory (Locked Pages)** | ❌ | ❌ | Best-effort scaffolding; audit pending |
 
-**Designed for:**
-- Nightly backup pipelines uploading terabytes
-- CI/CD artifact distribution to FTP endpoints
-- IoT fleet firmware delivery over constrained links
-- Any scenario where **"it just works unattended"** is the requirement
+**Target use cases after M0 completion:**
+- Nightly backup pipelines uploading large trees
+- CI/CD artifact distribution to FTP/FTPS endpoints
+- Firmware and asset delivery over constrained links
+- Unattended operations that require explicit verification and recovery
+
+The current M0 checkout is a development baseline, not yet a drop-in unattended transfer client.
 
 ---
 
@@ -188,6 +205,8 @@ Seven engineering phases, each ratified before the next began. The C ABI contrac
 
 ## Performance
 
+> **Benchmark status:** The comparative numbers in this section are design targets and historical placeholders, not validated M0 results. They must not be used as production performance claims until the clean-build benchmark suite is implemented and reproduced.
+
 ### Comparative Benchmarks
 
 **Test Environment:** Linux x86_64, AMD EPYC 7B13, NVMe SSD, 10Gbps link, vsftpd 3.0.5
@@ -215,6 +234,8 @@ Seven engineering phases, each ratified before the next began. The C ABI contrac
 ---
 
 ## Security
+
+> **Security status:** Security components and design requirements exist, but the public FTPS path is not complete. The controls below become release claims only after end-to-end FTPS integration and negative tests pass.
 
 ### Defense in Depth
 
@@ -521,7 +542,10 @@ Events are JSON-serializable for ingestion into Loki, Splunk, or CloudWatch:
 
 ---
 
-## Production Deployment
+## Development Deployment Examples
+
+> These examples describe future deployment environments for the completed library. They do not mean the M0 baseline is production-ready.
+
 
 ### systemd Service Example
 
@@ -650,5 +674,5 @@ MIT License — see [LICENSE](LICENSE).
 
 ---
 
-**Built with precision across seven engineering phases.**  
-**C ABI v1. Frozen. Forever backward-compatible.**
+**M0 baseline: truthful status first, real FTPS transfer next.**  
+**C ABI v1 remains the compatibility boundary; production claims require end-to-end tests.**

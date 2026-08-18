@@ -66,8 +66,9 @@ typedef struct ftp_client_internal ftp_client_t;
  * 
  * Ownership Semantics:
  *   - All const char* fields are borrowed references during the call
- *   - Implementation deep-copies into secure internal storage before returning
- *   - Caller may free/alter credential strings immediately after ftp_connect() returns
+ *   - M0 validates these fields but does not establish a session or retain them
+ *   - A future connected implementation will deep-copy credentials only for the
+ *     lifetime of the authenticated session
  */
 typedef struct {
     const char* host;           /* UTF-8, null-terminated. IP or hostname. */
@@ -272,6 +273,7 @@ typedef void (*ftp_event_cb_t)(const ftp_event_t* event, void* user_data);
 #define FTP_ERR_INVALID_HANDLE          -201
 #define FTP_ERR_INVALID_ARGUMENT        -202
 #define FTP_ERR_INVALID_STATE           -203
+#define FTP_ERR_NOT_IMPLEMENTED         -204  /* Public operation not wired yet */
 
 /* Authentication Errors (-3xx) */
 #define FTP_ERR_AUTH_FAILED             -301
@@ -365,8 +367,10 @@ FTP_API int32_t FTP_CALL ftp_set_timeout_command_ms(ftp_client_t* handle, uint32
  * Establish control connection and authenticate.
  * 
  * @param handle  The client handle
- * @param creds   Pointer to credentials structure (borrowed, deep-copied internally)
- * @return FTP_OK on success, or error code from Section 5
+ * @param creds   Pointer to credentials structure (borrowed during the call)
+ * @return FTP_ERR_NOT_IMPLEMENTED in the M0 baseline after input validation;
+ *         a future implementation will return FTP_OK only after a real
+ *         protocol and TLS session is established
  */
 FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials_t* creds);
 
@@ -382,17 +386,19 @@ FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle);
  * Connection health check.
  * 
  * @param handle  The client handle
- * @return FTP_OK if idle and responsive, error code otherwise
+ * @return FTP_ERR_INVALID_STATE in M0 because no real session exists;
+ *         a future implementation will return FTP_OK only after NOOP succeeds
  */
 FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle);
 
 /* ----------------------------------------------------------------------------
- * 6.4 Transfer Operations (Stubs for Phase 1 — signatures only)
+ * 6.4 Transfer Operations (Unavailable in M0 — signatures only)
  * ----------------------------------------------------------------------------
  */
 
 /**
- * Upload directory tree. Actual implementation in Phase 4.
+ * Upload directory tree. M0 validates arguments but returns
+ * FTP_ERR_NOT_IMPLEMENTED for a valid request.
  * 
  * @param handle        The client handle
  * @param local_path    UTF-8, null-terminated local directory path
@@ -401,7 +407,9 @@ FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle);
  * @param progress_cb   Nullable progress callback
  * @param user_data     Opaque pointer passed to progress_cb
  * @param out_result    Nullable result structure (caller-allocated, must call ftp_result_free())
- * @return FTP_OK on success, or error code from Section 5
+ * @return FTP_ERR_NOT_IMPLEMENTED in M0 for a valid request; otherwise an
+ *         argument/state error. A future implementation will return FTP_OK
+ *         only after server final-reply and transfer verification.
  */
 FTP_API int32_t FTP_CALL ftp_upload_dir(
     ftp_client_t*           handle,
@@ -443,7 +451,9 @@ FTP_API int32_t FTP_CALL ftp_result_free(ftp_result_t* result);
 FTP_API uint32_t FTP_CALL ftp_get_version(void);
 
 /**
- * Fills capability flags. Allows caller to detect optional features compiled in.
+ * Fills capability flags that are public and end-to-end tested in this build.
+ * M0 returns zero because protocol and transfer subsystems are not yet wired
+ * to the exported execution path.
  * 
  * @param out_caps  Pointer to uint64_t to receive capability bitmask
  * @return FTP_OK on success, FTP_ERR_INVALID_ARGUMENT if out_caps is NULL

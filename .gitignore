@@ -1,6 +1,7 @@
 ```
 # Build artifacts
 build/
+build-*/
 *.o
 *.obj
 *.so
@@ -19,6 +20,10 @@ Makefile
 # Python
 __pycache__/
 *.py[cod]
+
+# Generated Python packaging
+*.egg-info/
+python/ftpclient/_lib/
 
 # Dependencies
 venv/

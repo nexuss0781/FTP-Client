@@ -114,6 +114,7 @@ FTP_ERR_SYSTEM = -102
 FTP_ERR_INVALID_HANDLE = -201
 FTP_ERR_INVALID_ARGUMENT = -202
 FTP_ERR_INVALID_STATE = -203
+FTP_ERR_NOT_IMPLEMENTED = -204
 FTP_ERR_AUTH_FAILED = -301
 FTP_ERR_CONNECT = -401
 FTP_ERR_TIMEOUT = -402
@@ -173,12 +174,13 @@ def test_version_capabilities(lib):
     # Test version
     version = lib.ftp_get_version()
     test_assert("ftp_get_version returns non-zero", version != 0)
-    test_assert("Version is 1.0.0 (0x01000000)", version == 0x01000000)
+    test_assert("Version is M0 0.1.0 (0x00010000)", version == 0x00010000)
     
     # Test capabilities
     caps = ctypes.c_uint64()
     ret = lib.ftp_get_capabilities(ctypes.byref(caps))
     test_assert("ftp_get_capabilities returns OK", ret == FTP_OK)
+    test_assert("M0 reports no public capabilities", caps.value == 0)
     
     # Test with NULL
     ret = lib.ftp_get_capabilities(None)
@@ -307,13 +309,13 @@ def test_connection(lib):
     ret = lib.ftp_connect(handle, None)
     test_assert("ftp_connect with NULL creds fails", ret == FTP_ERR_INVALID_ARGUMENT)
     
-    # Test valid connect (stub)
+    # M0 must not claim a real network session.
     ret = lib.ftp_connect(handle, ctypes.byref(creds))
-    test_assert("ftp_connect with valid creds succeeds (stub)", ret == FTP_OK)
+    test_assert("ftp_connect reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED)
     
-    # Test ping when connected
+    # The failed connect must not transition the handle to CONNECTED.
     ret = lib.ftp_ping(handle)
-    test_assert("ftp_ping when connected succeeds (stub)", ret == FTP_OK)
+    test_assert("ftp_ping after unimplemented connect fails", ret == FTP_ERR_INVALID_STATE)
     
     # Test ping with NULL
     ret = lib.ftp_ping(None)
@@ -335,8 +337,8 @@ def test_connection(lib):
 
 
 def test_upload_dir_stub(lib):
-    """Test upload directory function (Phase 1 stub)."""
-    print("\n=== Testing Upload Directory (Phase 1 Stub) ===")
+    """Test the M0 upload contract: validation plus explicit unavailable status."""
+    print("\n=== Testing Upload Directory (M0 Unavailable) ===")
     
     # Setup signature - note: progress callback can be None (ctypes converts NULL automatically)
     lib.ftp_upload_dir.restype = ctypes.c_int32
@@ -359,11 +361,12 @@ def test_upload_dir_stub(lib):
     creds.port = 21
     lib.ftp_connect(handle, ctypes.byref(creds))
     
-    # Test without connection first
+    # A valid request is unavailable in M0 regardless of connection state.
     lib.ftp_disconnect(handle)
     result = FtpResult()
     ret = lib.ftp_upload_dir(handle, b"/local", b"/remote", None, None, None, ctypes.byref(result))
-    test_assert("ftp_upload_dir without connect fails", ret == FTP_ERR_INVALID_STATE)
+    test_assert("ftp_upload_dir reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED)
+    test_assert("upload result reports not implemented", result.status == FTP_ERR_NOT_IMPLEMENTED)
     
     # Reconnect
     lib.ftp_connect(handle, ctypes.byref(creds))
@@ -375,9 +378,9 @@ def test_upload_dir_stub(lib):
     ret = lib.ftp_upload_dir(handle, b"/local", None, None, None, None, None)
     test_assert("ftp_upload_dir with NULL remote_path fails", ret == FTP_ERR_INVALID_ARGUMENT)
     
-    # Test valid call (stub returns INVALID_STATE as not implemented)
+    # A valid transfer request remains unavailable in M0.
     ret = lib.ftp_upload_dir(handle, b"/local/test", b"/remote/test", None, None, None, ctypes.byref(result))
-    test_assert("ftp_upload_dir returns expected stub error", ret == FTP_ERR_INVALID_STATE)
+    test_assert("ftp_upload_dir reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED)
     
     lib.ftp_client_destroy(handle)
 

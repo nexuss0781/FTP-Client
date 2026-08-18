@@ -25,6 +25,7 @@ from ftpclient.exceptions import (
     FTPProtocolError,
     FTPIOError,
     FTPConfigError,
+    FTPNotImplementedError,
     FTPSystemError,
 )
 from ftpclient.client import FTPClient
@@ -45,6 +46,7 @@ try:
         'FTPProtocolError',
         'FTPIOError',
         'FTPConfigError',
+        'FTPNotImplementedError',
         'FTPSystemError',
     ]
 except ImportError:
@@ -60,10 +62,11 @@ except ImportError:
         'FTPProtocolError',
         'FTPIOError',
         'FTPConfigError',
+        'FTPNotImplementedError',
         'FTPSystemError',
     ]
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 __author__ = "FTP Client Library Team"
 
 

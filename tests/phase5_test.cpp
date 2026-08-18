@@ -420,7 +420,9 @@ void test_stall_detector_stall() {
     std::cout << "\n=== Testing Stall Detector: Stall Detection ===" << std::endl;
     
     StallDetectorConfig config;
-    config.minimum_bps = 1024.0;
+    /* With the detector's 256 KiB buffer estimate, 1 MiB/s yields a
+       0.75-second multiplier threshold, bounded by the 1-second minimum. */
+    config.minimum_bps = 1024.0 * 1024.0;
     config.stall_multiplier = 3.0;
     config.min_stall_seconds = 1;  /* 1 second minimum stall */
     
