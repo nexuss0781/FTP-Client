@@ -20,6 +20,7 @@
 #include "../security/OpenSSLInit.hpp"
 #include "Integrity.hpp"
 #include "RemoteListing.hpp"
+#include "../transfer/Verification.hpp"
 #include <memory>
 #include <string>
 #include <cstring>
@@ -89,6 +90,7 @@ struct TransferOptions {
     bool resume_metadata_enabled = true;
     bool resume_allow_unverified = false;
     std::string expected_sha256;
+    bool verify_remote_hash = false;
 };
 
 /**
@@ -212,7 +214,8 @@ public:
     int32_t download_file(const FileManifestEntry& entry,
                           uint64_t* out_bytes_received = nullptr,
                           const ProgressCallback& progress = ProgressCallback(),
-                          const TransferOptions& options = TransferOptions());
+                          const TransferOptions& options = TransferOptions(),
+                          VerificationMetadata* out_verification = nullptr);
 
     /** Retrieve and parse an MLSD listing for a remote directory. */
     int32_t list_directory(const std::string& remote_path,
@@ -877,9 +880,13 @@ inline bool resume_metadata_matches(const std::filesystem::path& path,
 inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
                                               uint64_t* out_bytes_received,
                                               const ProgressCallback& progress,
-                                              const TransferOptions& options) {
+                                              const TransferOptions& options,
+                                              VerificationMetadata* out_verification) {
     if (out_bytes_received != nullptr) {
         *out_bytes_received = 0;
+    }
+    if (out_verification != nullptr) {
+        *out_verification = VerificationMetadata();
     }
     if (!is_authenticated() || !control_thread_ ||
         entry.local_absolute_path.empty() || entry.remote_relative_path.empty()) {
@@ -1177,15 +1184,48 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
         return final_reply.status != 0 ? final_reply.status : -503;
     }
 
-    if (!options.expected_sha256.empty()) {
+    VerificationMetadata verification;
+    if (!options.expected_sha256.empty() || options.verify_remote_hash) {
+        verification.algorithm = "SHA-256";
+        verification.sources |= 0x0001; /* FTP_VERIFY_SOURCE_LOCAL */
         std::string actual_sha256;
-        if (!integrity::sha256_file(temp_path.string(), actual_sha256) ||
+        if (!integrity::sha256_file(temp_path.string(), actual_sha256)) {
+            verification.status = 3; /* FTP_VERIFY_STATUS_UNAVAILABLE */
+            if (out_verification != nullptr) *out_verification = verification;
+            fs::remove(temp_path, fs_error);
+            return -601;
+        }
+        verification.local_digest = actual_sha256;
+        if (!options.expected_sha256.empty() &&
             actual_sha256 != integrity::normalize_sha256(options.expected_sha256)) {
+            verification.status = 2; /* FTP_VERIFY_STATUS_FAILED */
+            if (out_verification != nullptr) *out_verification = verification;
             fs::remove(temp_path, fs_error);
             return -606;
         }
+        if (options.verify_remote_hash) {
+            verification.sources |= 0x0002; /* FTP_VERIFY_SOURCE_REMOTE */
+            std::string remote_hash;
+            const int32_t hash_status = get_remote_file_hash(
+                entry.remote_relative_path, "SHA-256", &remote_hash);
+            if (hash_status != 0) {
+                verification.status = 3; /* FTP_VERIFY_STATUS_UNAVAILABLE */
+                if (out_verification != nullptr) *out_verification = verification;
+                fs::remove(temp_path, fs_error);
+                return hash_status;
+            }
+            verification.remote_digest = remote_hash;
+            if (verification.local_digest != verification.remote_digest) {
+                verification.status = 2; /* FTP_VERIFY_STATUS_FAILED */
+                if (out_verification != nullptr) *out_verification = verification;
+                fs::remove(temp_path, fs_error);
+                return -606;
+            }
+        }
+        verification.status = 1; /* FTP_VERIFY_STATUS_PASSED */
     }
 
+    if (out_verification != nullptr) *out_verification = verification;
     fs::remove(final_path, fs_error);
     fs_error.clear();
     fs::rename(temp_path, final_path, fs_error);

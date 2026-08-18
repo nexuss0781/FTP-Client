@@ -13,6 +13,7 @@
 #include <mutex>
 #include <atomic>
 #include <cstdint>
+#include "Verification.hpp"
 
 namespace ftpclient { namespace transfer {
 
@@ -28,8 +29,9 @@ struct FileResult {
     uint64_t bytes_sent;
     uint32_t attempt_count;
     int32_t final_error;
+    VerificationMetadata verification;
     
-    FileResult() : status(0), bytes_sent(0), attempt_count(1), final_error(0) {}
+    FileResult() : status(0), bytes_sent(0), attempt_count(1), final_error(0), verification() {}
 };
 
 /**
@@ -55,7 +57,8 @@ public:
                        int32_t status,
                        uint64_t bytes_sent,
                        uint32_t attempt_count = 1,
-                       int32_t final_error = 0);
+                       int32_t final_error = 0,
+                       const VerificationMetadata& verification = VerificationMetadata());
     
     /**
      * Add to total bytes transferred counter

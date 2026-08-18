@@ -192,6 +192,12 @@ typedef struct ftp_file_result {
     /* Phase 5 extensions - attempt tracking per Phase 5 Spec Section 8.2 */
     uint32_t    attempt_count;    /* 1 = first try succeeded, >1 = retried */
     int32_t     final_error;      /* Error code from last attempt (if failed) */
+    /* M12 verification provenance; strings are owned and freed by ftp_result_free(). */
+    uint32_t    verification_status;  /* FTP_VERIFY_STATUS_* */
+    uint32_t    verification_sources; /* FTP_VERIFY_SOURCE_* bitmask */
+    const char* verification_algorithm;
+    const char* local_digest;
+    const char* remote_digest;
 } ftp_file_result_t;
 
 /*
@@ -305,6 +311,14 @@ typedef void (*ftp_event_cb_t)(const ftp_event_t* event, void* user_data);
 /* Warnings (+1xx) */
 #define FTP_WARN_PARTIAL_RETRY          101
 #define FTP_WARN_SKIPPED                102
+
+/* M12 per-file verification provenance. */
+#define FTP_VERIFY_STATUS_NONE          0
+#define FTP_VERIFY_STATUS_PASSED        1
+#define FTP_VERIFY_STATUS_FAILED        2
+#define FTP_VERIFY_STATUS_UNAVAILABLE   3
+#define FTP_VERIFY_SOURCE_LOCAL         0x0001
+#define FTP_VERIFY_SOURCE_REMOTE       0x0002
 
 /* ============================================================================
  * SECTION 6: EXPORTED FUNCTION SURFACE API
@@ -466,6 +480,9 @@ typedef struct {
     const ftp_download_digest_t* file_digests; /* Nullable per-file directory manifest */
     uint32_t    file_digest_count;
     int32_t     resume_allow_unverified; /* 1 = explicit legacy unsafe resume */
+    /* M12 extensions; callers must set struct_size before using them. */
+    int32_t     verify_remote_hash; /* 1 = query server HASH after RETR when advertised */
+    int32_t     max_parallel;       /* 0/1 = serial; >1 = bounded download workers */
 } ftp_download_options_t;
 
 FTP_API int32_t FTP_CALL ftp_download_file_ex(

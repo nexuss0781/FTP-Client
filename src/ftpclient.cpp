@@ -37,6 +37,22 @@ static int32_t copy_string_to_buffer(const std::string& value,
     return FTP_OK;
 }
 
+static char* duplicate_owned_string(const std::string& value) {
+    if (value.empty()) return nullptr;
+    char* copy = new char[value.size() + 1];
+    std::memcpy(copy, value.c_str(), value.size() + 1);
+    return copy;
+}
+
+static void copy_verification_to_c_result(
+    const ftpclient::VerificationMetadata& source, ftp_file_result_t& target) {
+    target.verification_status = source.status;
+    target.verification_sources = source.sources;
+    target.verification_algorithm = duplicate_owned_string(source.algorithm);
+    target.local_digest = duplicate_owned_string(source.local_digest);
+    target.remote_digest = duplicate_owned_string(source.remote_digest);
+}
+
 static bool path_is_within_root(const std::filesystem::path& root,
                                 const std::filesystem::path& candidate) {
     std::error_code error;
@@ -417,6 +433,7 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
                     target.bytes_sent = source.bytes_sent;
                     target.attempt_count = source.attempt_count;
                     target.final_error = source.final_error;
+                    copy_verification_to_c_result(source.verification, target);
                     if (source.status == FTP_OK) {
                         ++out_result->files_success;
                     } else {
@@ -505,6 +522,10 @@ FTP_API int32_t FTP_CALL ftp_download_file_ex(
             transfer_options.resume_metadata_enabled = false;
             transfer_options.resume_allow_unverified = true;
         }
+        if (options->struct_size >= offsetof(ftp_download_options_t, verify_remote_hash) +
+                                    sizeof(options->verify_remote_hash)) {
+            transfer_options.verify_remote_hash = options->verify_remote_hash != 0;
+        }
     }
 
     try {
@@ -524,8 +545,9 @@ FTP_API int32_t FTP_CALL ftp_download_file_ex(
         }
 
         uint64_t bytes_received = 0;
+        ftpclient::VerificationMetadata verification;
         int32_t status = impl->getProtocolEngine().download_file(
-            entry, &bytes_received, progress, transfer_options);
+            entry, &bytes_received, progress, transfer_options, &verification);
         if (out_result != nullptr) {
             out_result->status = status;
             out_result->files_total = 1;
@@ -544,6 +566,7 @@ FTP_API int32_t FTP_CALL ftp_download_file_ex(
             out_result->file_results[0].bytes_sent = bytes_received;
             out_result->file_results[0].attempt_count = 1;
             out_result->file_results[0].final_error = status;
+            copy_verification_to_c_result(verification, out_result->file_results[0]);
         }
         return status;
     } catch (const std::bad_alloc&) {
@@ -605,6 +628,10 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
             transfer_options.resume_metadata_enabled = false;
             transfer_options.resume_allow_unverified = true;
         }
+        if (options->struct_size >= offsetof(ftp_download_options_t, verify_remote_hash) +
+                                    sizeof(options->verify_remote_hash)) {
+            transfer_options.verify_remote_hash = options->verify_remote_hash != 0;
+        }
     }
     const ftp_download_digest_t* file_digests = nullptr;
     uint32_t file_digest_count = 0;
@@ -623,16 +650,9 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
         return FTP_ERR_INVALID_ARGUMENT;
     }
 
-    struct PendingResult {
-        std::string local_path;
-        std::string remote_path;
-        int32_t status = FTP_OK;
-        uint64_t bytes = 0;
-    };
-    std::vector<PendingResult> pending;
     namespace fs = std::filesystem;
+    std::vector<ftpclient::transfer::DownloadManifestEntry> download_manifest;
     int32_t overall_status = FTP_OK;
-    uint64_t total_bytes = 0;
 
     try {
         fs::path local_root(local_path);
@@ -640,15 +660,8 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
         fs::create_directories(local_root, fs_error);
         if (fs_error) return FTP_ERR_LOCAL_IO;
 
-        ftpclient::protocol::ProtocolEngine::ProgressCallback progress;
-        if (progress_cb != nullptr) {
-            progress = [progress_cb, user_data](uint64_t current, uint64_t total) {
-                progress_cb(nullptr, nullptr, current, total, 0.0, user_data);
-            };
-        }
-
-        std::function<int32_t(const std::string&, const fs::path&)> walk;
-        walk = [&](const std::string& remote_dir, const fs::path& local_dir) -> int32_t {
+        std::function<int32_t(const std::string&, const fs::path&)> collect;
+        collect = [&](const std::string& remote_dir, const fs::path& local_dir) -> int32_t {
             if (impl->getCancelToken() &&
                 impl->getCancelToken()->load(std::memory_order_acquire)) {
                 return FTP_ERR_CANCELLED;
@@ -672,21 +685,19 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
                 if (remote_entry.type == "dir") {
                     fs::create_directories(child_local, fs_error);
                     if (fs_error) return FTP_ERR_LOCAL_IO;
-                    const int32_t nested_status = walk(child_remote, child_local);
+                    const int32_t nested_status = collect(child_remote, child_local);
                     if (nested_status != FTP_OK) return nested_status;
                     continue;
                 }
-                ftpclient::protocol::FileManifestEntry file_entry;
-                file_entry.local_absolute_path = child_local.string();
-                file_entry.remote_relative_path = child_remote;
-                file_entry.size_bytes = remote_entry.has_size ? remote_entry.size_bytes : 0;
-                ftpclient::protocol::TransferOptions file_options = transfer_options;
+                ftpclient::transfer::DownloadManifestEntry manifest_entry;
+                manifest_entry.entry.local_absolute_path = child_local.string();
+                manifest_entry.entry.remote_relative_path = child_remote;
+                manifest_entry.entry.size_bytes = remote_entry.has_size ? remote_entry.size_bytes : 0;
                 if (file_digests != nullptr && file_digest_count > 0) {
                     const ftp_download_digest_t* matching_digest = nullptr;
                     for (uint32_t digest_index = 0; digest_index < file_digest_count; ++digest_index) {
                         const auto& digest = file_digests[digest_index];
-                        if (digest.remote_path != nullptr &&
-                            child_remote == digest.remote_path) {
+                        if (digest.remote_path != nullptr && child_remote == digest.remote_path) {
                             matching_digest = &digest;
                             break;
                         }
@@ -694,58 +705,65 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
                     if (matching_digest == nullptr || matching_digest->sha256 == nullptr) {
                         return FTP_ERR_INVALID_ARGUMENT;
                     }
-                    file_options.expected_sha256 = matching_digest->sha256;
+                    manifest_entry.expected_sha256 = matching_digest->sha256;
                 }
-                uint64_t received = 0;
-                ftpclient::protocol::ProtocolEngine::ProgressCallback file_progress;
-                if (progress_cb != nullptr) {
-                    file_progress = [progress_cb, local = child_local.string(),
-                                     remote = child_remote, user_data]
-                                    (uint64_t current, uint64_t total) {
-                        progress_cb(local.c_str(), remote.c_str(), current, total,
-                                    0.0, user_data);
-                    };
-                }
-                const int32_t file_status = impl->getProtocolEngine().download_file(
-                    file_entry, &received, file_progress, file_options);
-                pending.push_back({child_local.string(), child_remote, file_status, received});
-                total_bytes += received;
-                if (file_status != FTP_OK && overall_status == FTP_OK) {
-                    overall_status = file_status;
-                }
-                if (file_status == FTP_ERR_CANCELLED || file_status == FTP_ERR_STALLED) {
-                    return file_status;
-                }
+                download_manifest.push_back(std::move(manifest_entry));
             }
             return FTP_OK;
         };
 
-        overall_status = walk(remote_path, local_root);
-        if (out_result != nullptr) {
-            out_result->status = overall_status;
-            out_result->files_total = pending.size();
-            out_result->files_success = 0;
-            out_result->files_failed = 0;
-            out_result->bytes_transferred = total_bytes;
-            out_result->file_result_count = pending.size();
-            if (!pending.empty()) {
-                out_result->file_results = new ftp_file_result_t[pending.size()]();
-                for (size_t i = 0; i < pending.size(); ++i) {
-                    const auto& item = pending[i];
-                    char* local_copy = new char[item.local_path.size() + 1];
-                    char* remote_copy = new char[item.remote_path.size() + 1];
-                    std::strcpy(local_copy, item.local_path.c_str());
-                    std::strcpy(remote_copy, item.remote_path.c_str());
-                    out_result->file_results[i].local_path = local_copy;
-                    out_result->file_results[i].remote_path = remote_copy;
-                    out_result->file_results[i].status = item.status;
-                    out_result->file_results[i].bytes_sent = item.bytes;
-                    out_result->file_results[i].attempt_count = 1;
-                    out_result->file_results[i].final_error = item.status;
-                    if (item.status == FTP_OK) ++out_result->files_success;
-                    else ++out_result->files_failed;
+        overall_status = collect(remote_path, local_root);
+        if (overall_status == FTP_OK) {
+            ftpclient::transfer::TransferConfig transfer_config;
+            transfer_config.max_parallel = 1;
+            transfer_config.buffer_size = static_cast<uint32_t>(impl->getConfig().buffer_size);
+            transfer_config.stall_timeout_ms = transfer_options.stall_timeout_ms;
+            transfer_config.resume_enabled = transfer_options.resume_enabled ? 1 : 0;
+            transfer_config.resume_metadata_enabled = transfer_options.resume_metadata_enabled ? 1 : 0;
+            transfer_config.resume_allow_unverified = transfer_options.resume_allow_unverified ? 1 : 0;
+            transfer_config.verify_remote_hash = transfer_options.verify_remote_hash;
+            transfer_config.cancel_token = impl->getCancelToken();
+            if (options != nullptr &&
+                options->struct_size >= offsetof(ftp_download_options_t, max_parallel) +
+                                    sizeof(options->max_parallel) &&
+                options->max_parallel > 1) {
+                transfer_config.max_parallel = static_cast<uint32_t>(options->max_parallel);
+            }
+            ftpclient::transfer::TransferEngine engine(
+                impl->getProtocolEngine(), transfer_config);
+            overall_status = engine.download_directory(
+                download_manifest, progress_cb, user_data);
+            const auto results = engine.get_result_aggregator().get_results();
+            if (out_result != nullptr) {
+                out_result->status = overall_status;
+                out_result->files_total = download_manifest.size();
+                out_result->files_success = engine.get_result_aggregator().get_files_success();
+                out_result->files_failed = engine.get_result_aggregator().get_files_failed();
+                out_result->bytes_transferred = engine.get_result_aggregator().get_bytes_transferred();
+                out_result->file_result_count = results.size();
+                if (!results.empty()) {
+                    out_result->file_results = new ftp_file_result_t[results.size()]();
+                    for (size_t i = 0; i < results.size(); ++i) {
+                        const auto& source = results[i];
+                        auto& target = out_result->file_results[i];
+                        target.local_path = duplicate_owned_string(source.local_path);
+                        target.remote_path = duplicate_owned_string(source.remote_path);
+                        target.status = source.status;
+                        target.bytes_sent = source.bytes_sent;
+                        target.attempt_count = source.attempt_count;
+                        target.final_error = source.final_error;
+                        copy_verification_to_c_result(source.verification, target);
+                    }
                 }
             }
+        }
+        if (out_result != nullptr && overall_status != FTP_OK) {
+            out_result->status = overall_status;
+            out_result->files_total = download_manifest.size();
+            out_result->files_success = 0;
+            out_result->files_failed = 0;
+            out_result->bytes_transferred = 0;
+            out_result->file_result_count = 0;
         }
         return overall_status;
     } catch (const std::bad_alloc&) {
@@ -910,6 +928,9 @@ FTP_API int32_t FTP_CALL ftp_result_free(ftp_result_t* result) {
         for (uint64_t i = 0; i < result->file_result_count; ++i) {
             delete[] result->file_results[i].local_path;
             delete[] result->file_results[i].remote_path;
+            delete[] result->file_results[i].verification_algorithm;
+            delete[] result->file_results[i].local_digest;
+            delete[] result->file_results[i].remote_digest;
         }
         delete[] result->file_results;
     }
