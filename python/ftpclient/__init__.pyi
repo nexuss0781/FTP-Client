@@ -50,6 +50,11 @@ class UploadOptions:
     expected_sha256: Optional[str]
     stall_timeout_ms: int
     resume_metadata_enabled: bool
+    retry_max_delay_ms: int
+    retry_max_elapsed_ms: int
+    retry_categories: int
+    retry_jitter_factor: float
+    retry_all_errors: bool
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,15 @@ class DownloadOptions:
     resume_allow_unverified: bool
     verify_remote_hash: bool
     max_parallel: int
+    verification_policy: int
+    verification_algorithm: str
+    retry_attempts: int
+    retry_base_delay_ms: int
+    retry_max_delay_ms: int
+    retry_max_elapsed_ms: int
+    retry_categories: int
+    retry_jitter_factor: float
+    retry_all_errors: bool
 
 
 @dataclass(frozen=True)

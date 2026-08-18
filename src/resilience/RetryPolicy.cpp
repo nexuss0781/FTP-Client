@@ -6,6 +6,7 @@
 
 #include "RetryPolicy.hpp"
 #include <algorithm>
+#include <limits>
 #include <thread>
 
 namespace ftpclient { namespace resilience {
@@ -78,13 +79,29 @@ ErrorCategory RetryPolicy::classify_error(int32_t error_code) {
     return ErrorCategory::TRANSIENT_NETWORK;
 }
 
-bool RetryPolicy::is_retryable(int32_t error_code, bool retry_all) {
+uint32_t RetryPolicy::category_mask(ErrorCategory category) {
+    switch (category) {
+        case ErrorCategory::TRANSIENT_NETWORK: return kRetryCategoryNetwork;
+        case ErrorCategory::TRANSIENT_SERVER: return kRetryCategoryServer;
+        case ErrorCategory::AMBIGUOUS: return kRetryCategoryAmbiguous;
+        case ErrorCategory::PERMANENT_AUTH: return kRetryCategoryAuth;
+        case ErrorCategory::PERMANENT_PROTOCOL: return kRetryCategoryProtocol;
+        case ErrorCategory::PERMANENT_LOCAL: return kRetryCategoryLocal;
+        default: return 0;
+    }
+}
+
+bool RetryPolicy::is_retryable(int32_t error_code, bool retry_all,
+                               uint32_t retry_categories) {
     if (retry_all) {
         /* Hail Mary mode - retry everything */
         return error_code != 0;
     }
     
     ErrorCategory category = classify_error(error_code);
+    if ((category_mask(category) & retry_categories) == 0) {
+        return false;
+    }
     
     switch (category) {
         case ErrorCategory::TRANSIENT_NETWORK:
@@ -123,7 +140,9 @@ uint64_t RetryPolicy::calculate_delay(uint32_t attempt) {
     uint64_t capped_delay = std::min(exponential_delay, config_.max_delay_ms);
     
     /* Apply full jitter: random(0, capped_delay) */
-    double jitter = uniform_dist_(rng_);
+    double jitter = config_.jitter_factor <= 0.0
+        ? 1.0 : uniform_dist_(rng_) * config_.jitter_factor;
+    jitter = std::min(1.0, std::max(0.0, jitter));
     uint64_t delay = static_cast<uint64_t>(jitter * static_cast<double>(capped_delay));
     
     return delay;

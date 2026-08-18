@@ -9,20 +9,35 @@
 #define FTPCLIENT_RETRY_POLICY_HPP
 
 #include <cstdint>
+#include <algorithm>
 #include <random>
 #include <chrono>
 #include <thread>
 #include <functional>
+#include <limits>
 
 namespace ftpclient { namespace resilience {
 
 /**
  * Retry Configuration per Phase 5 Spec Section 4.1
  */
+constexpr uint32_t kRetryCategoryNetwork = 0x0001;
+constexpr uint32_t kRetryCategoryServer = 0x0002;
+constexpr uint32_t kRetryCategoryAmbiguous = 0x0004;
+constexpr uint32_t kRetryCategoryAuth = 0x0008;
+constexpr uint32_t kRetryCategoryProtocol = 0x0010;
+constexpr uint32_t kRetryCategoryLocal = 0x0020;
+constexpr uint32_t kRetryCategoryIntegrity = 0x0040;
+constexpr uint32_t kRetryCategoryDefault = kRetryCategoryNetwork |
+                                             kRetryCategoryServer |
+                                             kRetryCategoryAmbiguous;
+
 struct RetryConfig {
     uint32_t max_attempts;        /* Default: 3 (1 = initial only, no retry) */
     uint64_t base_delay_ms;       /* Default: 1000ms - Exponential backoff base */
     uint64_t max_delay_ms;        /* Default: 30000ms - Cap backoff at 30s */
+    uint64_t max_elapsed_ms;      /* Default: 0 - no wall-clock budget */
+    uint32_t retry_categories;   /* Category bitmask; default transient classes */
     double   jitter_factor;       /* Default: 1.0 - 1.0 = full jitter, 0.0 = no jitter */
     int32_t  retry_all_errors;    /* Default: 0 - 0 = retry only transient, 1 = retry all */
     
@@ -30,6 +45,8 @@ struct RetryConfig {
         : max_attempts(3)
         , base_delay_ms(1000)
         , max_delay_ms(30000)
+        , max_elapsed_ms(0)
+        , retry_categories(kRetryCategoryDefault)
         , jitter_factor(1.0)
         , retry_all_errors(0)
     {}
@@ -82,7 +99,8 @@ public:
      * @param retry_all If true, even permanent errors are considered retryable
      * @return true if error should be retried, false otherwise
      */
-    static bool is_retryable(int32_t error_code, bool retry_all = false);
+    static bool is_retryable(int32_t error_code, bool retry_all = false,
+                             uint32_t retry_categories = kRetryCategoryDefault);
     
     /**
      * Calculate delay for a given attempt using full jitter algorithm
@@ -94,6 +112,8 @@ public:
      * @return Delay in milliseconds
      */
     uint64_t calculate_delay(uint32_t attempt);
+
+    static uint32_t category_mask(ErrorCategory category);
     
     /**
      * Execute a function with retry logic
@@ -129,6 +149,7 @@ template<typename Func>
 int32_t RetryPolicy::execute_with_retry(Func&& func, uint32_t* attempt_count) {
     uint32_t attempts = 0;
     int32_t last_result = 0;
+    const auto started = std::chrono::steady_clock::now();
     
     while (attempts < config_.max_attempts + 1) {  /* +1 for initial attempt */
         attempts++;
@@ -139,7 +160,8 @@ int32_t RetryPolicy::execute_with_retry(Func&& func, uint32_t* attempt_count) {
         }
         
         /* Check if retryable */
-        if (!is_retryable(last_result, config_.retry_all_errors != 0)) {
+        if (!is_retryable(last_result, config_.retry_all_errors != 0,
+                          config_.retry_categories)) {
             break;  /* Non-retryable error, fail fast */
         }
         
@@ -148,8 +170,22 @@ int32_t RetryPolicy::execute_with_retry(Func&& func, uint32_t* attempt_count) {
             break;
         }
         
-        /* Calculate and apply backoff delay */
+        /* Enforce an optional wall-clock retry budget. */
+        if (config_.max_elapsed_ms != 0) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            if (elapsed >= static_cast<int64_t>(config_.max_elapsed_ms)) break;
+        }
+        /* Calculate and apply backoff delay, capped by remaining budget. */
         uint64_t delay_ms = calculate_delay(attempts - 1);  /* 0-indexed */
+        if (config_.max_elapsed_ms != 0) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            const uint64_t remaining = elapsed >= static_cast<int64_t>(config_.max_elapsed_ms)
+                ? 0 : config_.max_elapsed_ms - static_cast<uint64_t>(elapsed);
+            delay_ms = std::min(delay_ms, remaining);
+            if (remaining == 0) break;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
     }
     

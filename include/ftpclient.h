@@ -156,6 +156,12 @@ typedef struct {
     const char* expected_sha256;    /* Nullable. Lowercase/uppercase hex digest */
     uint32_t    stall_timeout_ms;   /* 0 = disabled; bounded data-I/O stall deadline */
     int32_t     resume_metadata_enabled; /* 0 = legacy SIZE resume, 1 = fingerprint-safe */
+    /* M13 retry-policy extensions; callers must set struct_size before use. */
+    uint64_t    retry_max_delay_ms;
+    uint64_t    retry_max_elapsed_ms;
+    uint32_t    retry_categories;
+    double      retry_jitter_factor;
+    int32_t     retry_all_errors;
 } ftp_upload_options_t;
 
 /*
@@ -320,6 +326,22 @@ typedef void (*ftp_event_cb_t)(const ftp_event_t* event, void* user_data);
 #define FTP_VERIFY_SOURCE_LOCAL         0x0001
 #define FTP_VERIFY_SOURCE_REMOTE       0x0002
 
+/* M13 verification policy controls. */
+#define FTP_VERIFY_POLICY_NONE             0
+#define FTP_VERIFY_POLICY_LOCAL_EXPECTED   1
+#define FTP_VERIFY_POLICY_REMOTE_OPTIONAL  2
+#define FTP_VERIFY_POLICY_REMOTE_REQUIRED  3
+#define FTP_VERIFY_POLICY_LOCAL_AND_REMOTE 4
+
+/* M13 retry-category policy bitmasks. */
+#define FTP_RETRY_CATEGORY_NETWORK   0x0001
+#define FTP_RETRY_CATEGORY_SERVER    0x0002
+#define FTP_RETRY_CATEGORY_AMBIGUOUS 0x0004
+#define FTP_RETRY_CATEGORY_AUTH      0x0008
+#define FTP_RETRY_CATEGORY_PROTOCOL  0x0010
+#define FTP_RETRY_CATEGORY_LOCAL     0x0020
+#define FTP_RETRY_CATEGORY_DEFAULT   (FTP_RETRY_CATEGORY_NETWORK | FTP_RETRY_CATEGORY_SERVER | FTP_RETRY_CATEGORY_AMBIGUOUS)
+
 /* ============================================================================
  * SECTION 6: EXPORTED FUNCTION SURFACE API
  * ============================================================================
@@ -483,6 +505,17 @@ typedef struct {
     /* M12 extensions; callers must set struct_size before using them. */
     int32_t     verify_remote_hash; /* 1 = query server HASH after RETR when advertised */
     int32_t     max_parallel;       /* 0/1 = serial; >1 = bounded download workers */
+    /* M13 extensions; callers must set struct_size before using them. */
+    uint32_t    verification_policy; /* FTP_VERIFY_POLICY_* */
+    const char* verification_algorithm; /* Nullable; currently SHA-256 */
+    /* M13 retry-policy extensions; callers must set struct_size before use. */
+    uint32_t    retry_attempts;
+    uint64_t    retry_base_delay_ms;
+    uint64_t    retry_max_delay_ms;
+    uint64_t    retry_max_elapsed_ms;
+    uint32_t    retry_categories;
+    double      retry_jitter_factor;
+    int32_t     retry_all_errors;
 } ftp_download_options_t;
 
 FTP_API int32_t FTP_CALL ftp_download_file_ex(
