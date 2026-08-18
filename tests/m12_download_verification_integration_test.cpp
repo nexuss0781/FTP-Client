@@ -230,6 +230,13 @@ int main() {
     options.struct_size = sizeof(options);
     options.verify_remote_hash = 1;
     options.max_parallel = 2;
+    options.verification_policy = FTP_VERIFY_POLICY_LOCAL_AND_REMOTE;
+    options.verification_algorithm = "SHA-256";
+    options.retry_attempts = 2;
+    options.retry_base_delay_ms = 0;
+    options.retry_max_delay_ms = 1;
+    options.retry_jitter_factor = 0.0;
+    options.retry_categories = FTP_RETRY_CATEGORY_DEFAULT;
     ftp_result_t result{};
     const int32_t status = ftp_download_dir(
         client, root.c_str(), "/deploy", &options, nullptr, nullptr, &result);

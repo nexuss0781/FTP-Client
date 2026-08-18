@@ -48,11 +48,17 @@ struct TransferConfig {
     uint32_t retry_attempts;        /* Retry count after initial attempt */
     uint64_t retry_base_delay_ms;   /* Backoff base */
     uint64_t retry_max_delay_ms;    /* Backoff cap */
+    uint64_t retry_max_elapsed_ms;  /* 0 = no wall-clock retry budget */
+    uint32_t retry_categories;      /* resilience category bitmask */
+    double retry_jitter_factor;     /* 0 = no jitter, 1 = full jitter */
+    int32_t retry_all_errors;       /* 1 = retry permanent categories too */
     uint32_t stall_timeout_ms;      /* 0 = disabled */
     int32_t resume_metadata_enabled;/* 1 = only resume same source fingerprint */
     int32_t resume_allow_unverified; /* 1 = explicit legacy unsafe resume */
     std::string expected_sha256;    /* Optional source digest */
     bool verify_remote_hash;        /* M12: verify RETR with server HASH */
+    uint32_t verification_policy;   /* M13 FTP_VERIFY_POLICY_* */
+    std::string verification_algorithm;
     std::shared_ptr<std::atomic<bool>> cancel_token;
     
     TransferConfig()
@@ -63,11 +69,17 @@ struct TransferConfig {
         , retry_attempts(3)
         , retry_base_delay_ms(1000)
         , retry_max_delay_ms(30000)
+        , retry_max_elapsed_ms(0)
+        , retry_categories(resilience::kRetryCategoryDefault)
+        , retry_jitter_factor(1.0)
+        , retry_all_errors(0)
         , stall_timeout_ms(0)
         , resume_metadata_enabled(0)
         , resume_allow_unverified(0)
         , expected_sha256()
         , verify_remote_hash(false)
+        , verification_policy(0)
+        , verification_algorithm("SHA-256")
         , cancel_token(std::make_shared<std::atomic<bool>>(false))
     {}
 };

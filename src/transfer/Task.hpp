@@ -53,6 +53,7 @@ struct Task {
     
     /* Result tracking */
     int32_t result_status;              /* FTP_OK or error code */
+    uint32_t attempt_count;
     uint64_t bytes_sent;                /* Bytes successfully transferred */
     VerificationMetadata verification;
     
@@ -63,6 +64,7 @@ struct Task {
         , progress_cb(nullptr)
         , progress_user_data(nullptr)
         , result_status(0)
+        , attempt_count(1)
         , bytes_sent(0)
         , verification()
     {}
@@ -78,6 +80,7 @@ struct Task {
         , progress_cb(other.progress_cb)
         , progress_user_data(other.progress_user_data)
         , result_status(other.result_status)
+        , attempt_count(other.attempt_count)
         , bytes_sent(other.bytes_sent)
         , verification(std::move(other.verification))
     {
@@ -98,6 +101,7 @@ struct Task {
             progress_cb = other.progress_cb;
             progress_user_data = other.progress_user_data;
             result_status = other.result_status;
+            attempt_count = other.attempt_count;
             bytes_sent = other.bytes_sent;
             verification = std::move(other.verification);
             

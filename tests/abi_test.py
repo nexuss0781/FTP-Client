@@ -93,6 +93,11 @@ class FtpUploadOptions(ctypes.Structure):
         ("expected_sha256", ctypes.c_char_p),
         ("stall_timeout_ms", ctypes.c_uint32),
         ("resume_metadata_enabled", ctypes.c_int32),
+        ("retry_max_delay_ms", ctypes.c_uint64),
+        ("retry_max_elapsed_ms", ctypes.c_uint64),
+        ("retry_categories", ctypes.c_uint32),
+        ("retry_jitter_factor", ctypes.c_double),
+        ("retry_all_errors", ctypes.c_int32),
     ]
 
 
@@ -117,6 +122,15 @@ class FtpDownloadOptions(ctypes.Structure):
         ("resume_allow_unverified", ctypes.c_int32),
         ("verify_remote_hash", ctypes.c_int32),
         ("max_parallel", ctypes.c_int32),
+        ("verification_policy", ctypes.c_uint32),
+        ("verification_algorithm", ctypes.c_char_p),
+        ("retry_attempts", ctypes.c_uint32),
+        ("retry_base_delay_ms", ctypes.c_uint64),
+        ("retry_max_delay_ms", ctypes.c_uint64),
+        ("retry_max_elapsed_ms", ctypes.c_uint64),
+        ("retry_categories", ctypes.c_uint32),
+        ("retry_jitter_factor", ctypes.c_double),
+        ("retry_all_errors", ctypes.c_int32),
     ]
 class FtpFileResult(ctypes.Structure):
     """ftp_file_result_t structure."""
@@ -288,6 +302,13 @@ def test_m11_exports(lib):
     test_assert("M12 download-option fields are present",
                  hasattr(FtpDownloadOptions, "verify_remote_hash") and
                  hasattr(FtpDownloadOptions, "max_parallel"))
+    test_assert("M13 verification-policy fields are present",
+                 hasattr(FtpDownloadOptions, "verification_policy") and
+                 hasattr(FtpDownloadOptions, "verification_algorithm"))
+    test_assert("M13 retry-policy fields are present",
+                 hasattr(FtpDownloadOptions, "retry_max_elapsed_ms") and
+                 hasattr(FtpDownloadOptions, "retry_categories") and
+                 hasattr(FtpUploadOptions, "retry_jitter_factor"))
     for symbol in ("ftp_get_server_capabilities", "ftp_get_remote_file_mdtm", "ftp_get_remote_file_hash", "ftp_verify_local_file_with_remote_hash"):
         test_assert(f"{symbol} is exported", hasattr(lib, symbol))
     lib.ftp_get_server_capabilities.restype = ctypes.c_int32

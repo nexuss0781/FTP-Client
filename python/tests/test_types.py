@@ -35,10 +35,31 @@ def test_verification_metadata_dataclass():
     assert passed.unavailable is False
     unavailable = VerificationMetadata(3, 1)
     assert unavailable.unavailable is True
-    options = DownloadOptions(verify_remote_hash=True, max_parallel=2)
+    options = DownloadOptions(
+        verify_remote_hash=True,
+        max_parallel=2,
+        verification_policy=4,
+        verification_algorithm="SHA-256",
+        retry_attempts=2,
+        retry_max_elapsed_ms=50,
+        retry_jitter_factor=0.0,
+    )
     assert options.verify_remote_hash is True
     assert options.max_parallel == 2
-    print("[PASS] VerificationMetadata and M12 DownloadOptions work correctly")
+    assert options.verification_policy == 4
+    assert options.retry_attempts == 2
+    assert options.retry_jitter_factor == 0.0
+    try:
+        DownloadOptions(verification_policy=5)
+        return False
+    except ValueError:
+        pass
+    try:
+        DownloadOptions(retry_jitter_factor=1.5)
+        return False
+    except ValueError:
+        pass
+    print("[PASS] VerificationMetadata and M13 DownloadOptions work correctly")
     return True
 
 
@@ -106,6 +127,8 @@ def test_upload_options_dataclass():
     assert opts2.max_parallel == 8
     assert opts2.resume_enabled is True
     assert opts2.remote_chmod == "0644"
+    assert opts2.retry_max_delay_ms == 30000
+    assert opts2.retry_categories == 0x0007
     
     print("[PASS] UploadOptions dataclass works correctly")
     return True

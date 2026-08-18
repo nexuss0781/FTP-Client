@@ -96,6 +96,11 @@ class UploadOptions:
     expected_sha256: Optional[str] = None
     stall_timeout_ms: int = 0
     resume_metadata_enabled: bool = False
+    retry_max_delay_ms: int = 30000
+    retry_max_elapsed_ms: int = 0
+    retry_categories: int = 0x0007
+    retry_jitter_factor: float = 1.0
+    retry_all_errors: bool = False
     
     def __post_init__(self) -> None:
         """Validate upload options."""
@@ -105,6 +110,12 @@ class UploadOptions:
             raise ValueError(f"retry_attempts must be >= 0, got {self.retry_attempts}")
         if self.retry_base_delay_ms < 0:
             raise ValueError(f"retry_base_delay_ms must be >= 0, got {self.retry_base_delay_ms}")
+        if self.retry_max_delay_ms < 0 or self.retry_max_elapsed_ms < 0:
+            raise ValueError("retry delay and elapsed budgets must be >= 0")
+        if self.retry_categories < 0:
+            raise ValueError("retry_categories must be >= 0")
+        if not 0.0 <= self.retry_jitter_factor <= 1.0:
+            raise ValueError("retry_jitter_factor must be between 0 and 1")
         if self.stall_timeout_ms < 0:
             raise ValueError(f"stall_timeout_ms must be >= 0, got {self.stall_timeout_ms}")
         if self.expected_sha256 is not None:
@@ -156,12 +167,33 @@ class DownloadOptions:
     resume_allow_unverified: bool = False
     verify_remote_hash: bool = False
     max_parallel: int = 1
+    verification_policy: int = 0
+    verification_algorithm: str = "SHA-256"
+    retry_attempts: int = 3
+    retry_base_delay_ms: int = 1000
+    retry_max_delay_ms: int = 30000
+    retry_max_elapsed_ms: int = 0
+    retry_categories: int = 0x0007
+    retry_jitter_factor: float = 1.0
+    retry_all_errors: bool = False
 
     def __post_init__(self) -> None:
         if self.stall_timeout_ms < 0:
             raise ValueError(f"stall_timeout_ms must be >= 0, got {self.stall_timeout_ms}")
         if self.max_parallel < 0:
             raise ValueError(f"max_parallel must be >= 0, got {self.max_parallel}")
+        if not 0 <= self.verification_policy <= 4:
+            raise ValueError("verification_policy must be between 0 and 4")
+        if not self.verification_algorithm:
+            raise ValueError("verification_algorithm cannot be empty")
+        if self.retry_attempts < 0 or self.retry_base_delay_ms < 0:
+            raise ValueError("retry_attempts and retry_base_delay_ms must be >= 0")
+        if self.retry_max_delay_ms < 0 or self.retry_max_elapsed_ms < 0:
+            raise ValueError("retry delay and elapsed budgets must be >= 0")
+        if self.retry_categories < 0:
+            raise ValueError("retry_categories must be >= 0")
+        if not 0.0 <= self.retry_jitter_factor <= 1.0:
+            raise ValueError("retry_jitter_factor must be between 0 and 1")
         if self.expected_sha256 is not None:
             digest = self.expected_sha256.replace(":", "").lower()
             if not re.fullmatch(r"[0-9a-f]{64}", digest):
