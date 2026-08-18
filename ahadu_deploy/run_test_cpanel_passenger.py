@@ -1,0 +1,5 @@
+from test_cpanel_passenger import test_register_preserves_multiple_environment_variables
+
+
+test_register_preserves_multiple_environment_variables()
+print("cPanel Passenger adapter test: PASS")

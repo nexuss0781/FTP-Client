@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ftpclient
-    VERSION 1.0.0
+    VERSION 0.1.0
     DESCRIPTION "High-Performance FTP Client Library with C ABI"
     LANGUAGES CXX C
 )
@@ -23,6 +23,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Default build type
+option(FTP_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
@@ -44,8 +46,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         add_compile_options(-O3)
     elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_compile_options(-g -O0)
-        add_compile_options(-fsanitize=address,undefined)
-        add_link_options(-fsanitize=address,undefined)
+        if(FTP_ENABLE_SANITIZERS)
+            add_compile_options(-fsanitize=address,undefined)
+            add_link_options(-fsanitize=address,undefined)
+        endif()
     endif()
 elseif(MSVC)
     # MSVC: Use .def file for exports (preferred per spec Section 9.3)
@@ -217,6 +221,8 @@ endif()
 # Test Executables
 # ============================================================================
 
+enable_testing()
+
 # ABI test in plain C (spec Section 12)
 add_executable(abi_test tests/abi_test.c)
 target_link_libraries(abi_test PRIVATE ftpclient)
@@ -224,6 +230,7 @@ set_target_properties(abi_test PROPERTIES
     C_STANDARD 99
     C_STANDARD_REQUIRED ON
 )
+add_test(NAME abi_test COMMAND abi_test)
 
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
@@ -233,6 +240,7 @@ set_target_properties(header_purity_test PROPERTIES
     C_STANDARD_REQUIRED ON
     COMPILE_OPTIONS "-pedantic;-Wall;-Werror"
 )
+add_test(NAME header_purity_test COMMAND header_purity_test)
 
 # Phase 2 Protocol Engine Tests
 add_executable(phase2_test tests/phase2_test.cpp)
@@ -242,6 +250,7 @@ set_target_properties(phase2_test PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
 )
+add_test(NAME phase2_test COMMAND phase2_test)
 
 # Phase 5 Resilience Engine Tests
 add_executable(phase5_test tests/phase5_test.cpp src/resilience/RetryPolicy.cpp src/resilience/CircuitBreaker.cpp src/resilience/StallDetector.cpp src/resilience/IdempotencyClassifier.cpp src/resilience/ResilienceController.cpp)
@@ -251,6 +260,7 @@ set_target_properties(phase5_test PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
 )
+add_test(NAME phase5_test COMMAND phase5_test)
 
 # ============================================================================
 # Installation Rules

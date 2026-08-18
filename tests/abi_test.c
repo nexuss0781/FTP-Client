@@ -27,22 +27,6 @@ static int tests_failed = 0;
     } \
 } while(0)
 
-/* Helper to print error codes */
-static const char* error_to_string(int32_t code) {
-    switch (code) {
-        case FTP_OK: return "FTP_OK";
-        case FTP_ERR_NOMEM: return "FTP_ERR_NOMEM";
-        case FTP_ERR_SYSTEM: return "FTP_ERR_SYSTEM";
-        case FTP_ERR_INVALID_HANDLE: return "FTP_ERR_INVALID_HANDLE";
-        case FTP_ERR_INVALID_ARGUMENT: return "FTP_ERR_INVALID_ARGUMENT";
-        case FTP_ERR_INVALID_STATE: return "FTP_ERR_INVALID_STATE";
-        case FTP_ERR_AUTH_FAILED: return "FTP_ERR_AUTH_FAILED";
-        case FTP_ERR_CONNECT: return "FTP_ERR_CONNECT";
-        case FTP_ERR_TIMEOUT: return "FTP_ERR_TIMEOUT";
-        default: return "UNKNOWN";
-    }
-}
-
 /* Test: Version and Capabilities */
 static void test_version_capabilities(void) {
     printf("\n=== Testing Version and Capabilities ===\n");
@@ -50,13 +34,13 @@ static void test_version_capabilities(void) {
     uint32_t version = ftp_get_version();
     TEST_ASSERT("ftp_get_version returns non-zero", version != 0);
     
-    /* Expected version 1.0.0 = 0x01000000 */
-    TEST_ASSERT("Version is 1.0.0", version == 0x01000000);
+    /* M0 development version 0.1.0 = 0x00010000 */
+    TEST_ASSERT("Version is M0 0.1.0", version == 0x00010000);
     
     uint64_t caps;
     int32_t ret = ftp_get_capabilities(&caps);
     TEST_ASSERT("ftp_get_capabilities returns OK", ret == FTP_OK);
-    TEST_ASSERT("Capabilities returned", caps != 0 || caps == 0); /* Just check it doesn't crash */
+    TEST_ASSERT("M0 reports no public capabilities", caps == 0);
     
     /* Test NULL argument handling */
     ret = ftp_get_capabilities(NULL);
@@ -200,7 +184,7 @@ static void test_connection(void) {
     ret = ftp_connect(handle, &creds);
     TEST_ASSERT("ftp_connect with port 0 fails", ret == FTP_ERR_INVALID_ARGUMENT);
     
-    /* Test valid connect (stub - will succeed but not actually connect in Phase 1) */
+    /* M0 must not claim a real network session. */
     creds.host = "localhost";
     creds.port = 21;
     creds.username = "testuser";
@@ -209,11 +193,11 @@ static void test_connection(void) {
     creds.verify_cert = FTP_VERIFY_NONE;
     
     ret = ftp_connect(handle, &creds);
-    TEST_ASSERT("ftp_connect with valid creds succeeds (stub)", ret == FTP_OK);
+    TEST_ASSERT("ftp_connect reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
     
-    /* Test ping when connected */
+    /* The failed connect must not transition the handle to CONNECTED. */
     ret = ftp_ping(handle);
-    TEST_ASSERT("ftp_ping when connected succeeds (stub)", ret == FTP_OK);
+    TEST_ASSERT("ftp_ping after unimplemented connect fails", ret == FTP_ERR_INVALID_STATE);
     
     /* Test ping with NULL handle */
     ret = ftp_ping(NULL);
@@ -231,9 +215,9 @@ static void test_connection(void) {
     ret = ftp_ping(handle);
     TEST_ASSERT("ftp_ping after disconnect fails", ret == FTP_ERR_INVALID_STATE);
     
-    /* Test reconnect after disconnect */
+    /* Reconnect remains unavailable until the real session is wired. */
     ret = ftp_connect(handle, &creds);
-    TEST_ASSERT("Reconnect after disconnect succeeds", ret == FTP_OK);
+    TEST_ASSERT("Reconnect reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     ftp_client_destroy(handle);
 }
@@ -251,16 +235,17 @@ static void test_upload_dir_stub(void) {
     memset(&result, 0, sizeof(result));
     
     ret = ftp_upload_dir(handle, "/local", "/remote", NULL, NULL, NULL, &result);
-    TEST_ASSERT("ftp_upload_dir without connect fails", ret == FTP_ERR_INVALID_STATE);
+    TEST_ASSERT("ftp_upload_dir reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("upload result reports not implemented", result.status == FTP_ERR_NOT_IMPLEMENTED);
     
-    /* Connect first */
+    /* A valid upload request remains unavailable in M0. */
     ftp_credentials_t creds;
     memset(&creds, 0, sizeof(creds));
     creds.host = "localhost";
     creds.port = 21;
     
     ret = ftp_connect(handle, &creds);
-    TEST_ASSERT("Connect for upload test", ret == FTP_OK);
+    TEST_ASSERT("Connect for upload test reports not implemented", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     /* Test upload with NULL paths */
     ret = ftp_upload_dir(handle, NULL, "/remote", NULL, NULL, NULL, NULL);
@@ -273,9 +258,9 @@ static void test_upload_dir_stub(void) {
     ret = ftp_upload_dir(handle, "", "/remote", NULL, NULL, NULL, NULL);
     TEST_ASSERT("ftp_upload_dir with empty local_path fails", ret == FTP_ERR_INVALID_ARGUMENT);
     
-    /* Test valid upload call (stub - returns INVALID_STATE as not implemented) */
+    /* Test valid upload request reports not implemented in M0. */
     ret = ftp_upload_dir(handle, "/local/test", "/remote/test", NULL, NULL, NULL, &result);
-    TEST_ASSERT("ftp_upload_dir returns expected stub error", ret == FTP_ERR_INVALID_STATE);
+    TEST_ASSERT("ftp_upload_dir reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     ftp_client_destroy(handle);
 }
