@@ -202,6 +202,8 @@ FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials
     engine_creds.username = creds_to_use->username ? creds_to_use->username : "";
     engine_creds.password = creds_to_use->password ? creds_to_use->password : "";
     engine_creds.use_tls = creds_to_use->use_tls;
+    engine_creds.verify_cert = creds_to_use->verify_cert;
+    engine_creds.ca_bundle_path = creds_to_use->ca_bundle_path ? creds_to_use->ca_bundle_path : "";
 
     impl->getProtocolEngine().get_config().timeout_connect_ms = impl->getConfig().timeout_connect;
     impl->getProtocolEngine().set_command_timeout(impl->getConfig().timeout_command);
@@ -338,12 +340,12 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
     }
     
     /*
-     * M1 truthfulness rule: only the plain control session is public because
-     * it is wired and tested through the exported execution path. TLS and
-     * data-transfer features remain intentionally unadvertised.
+     * M2 truthfulness rule: plain FTP and explicit FTPS control sessions are
+     * public because they are wired and tested through the exported execution
+     * path. Data-transfer features remain intentionally unadvertised.
      */
-    /* M1 exposes only the real plain control session. */
-    *out_caps = FTP_CAP_CONTROL_FTP;
+    /* M2 exposes the real plain and explicit-FTPS control sessions. */
+    *out_caps = FTP_CAP_CONTROL_FTP | FTP_CAP_TLS;
     return FTP_OK;
 }
 

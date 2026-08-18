@@ -197,6 +197,16 @@ void PlainTransport::set_timeouts(uint32_t connect_timeout_ms, uint32_t io_timeo
     }
 }
 
+int PlainTransport::release_socket() {
+    if (!connected_ || socket_ == INVALID_SOCKET_HANDLE) {
+        return -1;
+    }
+    int released = socket_;
+    socket_ = INVALID_SOCKET_HANDLE;
+    connected_ = false;
+    return released;
+}
+
 int32_t PlainTransport::shutdown() {
     if (!connected_ && socket_ == INVALID_SOCKET_HANDLE) {
         return 0;  // Already closed
@@ -240,14 +250,22 @@ int32_t PlainTransport::resolve_host(const char* host, struct sockaddr_storage* 
         return ERR_DNS;
     }
     
-    // Use first result
-    if (result->ai_addrlen > sizeof(struct sockaddr_storage)) {
+    // Prefer IPv4 when both families are available. This keeps common FTP
+    // localhost deployments interoperable while retaining IPv6 fallback.
+    struct addrinfo* selected = result;
+    for (struct addrinfo* candidate = result; candidate != nullptr; candidate = candidate->ai_next) {
+        if (candidate->ai_family == AF_INET) {
+            selected = candidate;
+            break;
+        }
+    }
+    if (selected->ai_addrlen > sizeof(struct sockaddr_storage)) {
         freeaddrinfo(result);
         return ERR_DNS;
     }
     
-    std::memcpy(addr, result->ai_addr, result->ai_addrlen);
-    *addr_len = static_cast<socklen_t>(result->ai_addrlen);
+    std::memcpy(addr, selected->ai_addr, selected->ai_addrlen);
+    *addr_len = static_cast<socklen_t>(selected->ai_addrlen);
     freeaddrinfo(result);
     
     return 0;

@@ -15,8 +15,12 @@
 #include "DataChannel.hpp"
 #include "DirectoryWalker.hpp"
 #include "ErrorMap.hpp"
+#include "ReplyParser.hpp"
+#include "../security/TlsTransport.hpp"
+#include "../security/OpenSSLInit.hpp"
 #include <memory>
 #include <string>
+#include <cstring>
 
 namespace ftpclient { namespace protocol {
 
@@ -44,10 +48,13 @@ struct ConnectionCredentials {
     std::string username;
     std::string password;
     int32_t use_tls;
+    int32_t verify_cert;
+    std::string ca_bundle_path;
     
     ConnectionCredentials()
         : port(21)
         , use_tls(0)
+        , verify_cert(2)
     {}
 };
 
@@ -227,44 +234,178 @@ inline int32_t ProtocolEngine::connect(const ConnectionCredentials& creds) {
     if (is_connected()) {
         return -203;  // FTP_ERR_INVALID_STATE
     }
-    
     if (creds.host.empty() || creds.port == 0) {
         return -202;  // FTP_ERR_INVALID_ARGUMENT
     }
-    if (creds.use_tls != 0) {
-        return -204;  // FTP_ERR_NOT_IMPLEMENTED until TLS factory is integrated
+    if (creds.use_tls == 2) {
+        return -204;  // Implicit FTPS is a later milestone
     }
-    
+    if (creds.use_tls != 0 && creds.use_tls != 1) {
+        return -202;  // FTP_ERR_INVALID_ARGUMENT
+    }
+
     creds_ = creds;
-    
-    // Create transport
-    control_transport_ = create_transport();
-    if (!control_transport_) {
-        return -401;  // FTP_ERR_CONNECT
-    }
-    control_transport_->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
-    
-    int32_t ret = control_transport_->connect(creds.host.c_str(), creds.port);
+    auto plain = std::make_unique<PlainTransport>();
+    plain->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+    int32_t ret = plain->connect(creds.host.c_str(), creds.port);
     if (ret != 0) {
         return ret;
     }
-    
-    // Start control thread
-    ret = control_thread_->start(std::move(control_transport_), creds.host);
+
+    if (creds.use_tls == 1) {
+        // Explicit FTPS starts with the normal FTP greeting on the plaintext
+        // control socket, followed by AUTH TLS.
+        std::string greeting_buffer;
+        greeting_buffer.reserve(4096);
+        FtpReply greeting_reply;
+        size_t greeting_consumed = 0;
+        char greeting_read_buffer[4096];
+        for (;;) {
+            int32_t greeting_read = plain->read(greeting_read_buffer, sizeof(greeting_read_buffer));
+            if (greeting_read <= 0) {
+                return greeting_read == 0 ? -403 : greeting_read;
+            }
+            greeting_buffer.append(greeting_read_buffer, static_cast<size_t>(greeting_read));
+            ParseResult greeting_parsed = ReplyParser::parse(
+                greeting_buffer.data(), greeting_buffer.size(), greeting_reply, greeting_consumed);
+            if (greeting_parsed == ParseResult::COMPLETE) {
+                break;
+            }
+            if (greeting_parsed == ParseResult::MALFORMED || greeting_parsed == ParseResult::BUFFER_OVERFLOW) {
+                return -501;
+            }
+        }
+        while (greeting_reply.code >= 100 && greeting_reply.code < 200) {
+            greeting_buffer.clear();
+            greeting_consumed = 0;
+            int32_t greeting_read = plain->read(greeting_read_buffer, sizeof(greeting_read_buffer));
+            if (greeting_read <= 0) {
+                return greeting_read == 0 ? -403 : greeting_read;
+            }
+            greeting_buffer.append(greeting_read_buffer, static_cast<size_t>(greeting_read));
+            ParseResult greeting_parsed = ReplyParser::parse(
+                greeting_buffer.data(), greeting_buffer.size(), greeting_reply, greeting_consumed);
+            if (greeting_parsed != ParseResult::COMPLETE) {
+                return -501;
+            }
+        }
+        if (greeting_reply.code < 200 || greeting_reply.code >= 400) {
+            return map_ftp_code_to_error(greeting_reply.code);
+        }
+
+        // Explicit FTPS: negotiate AUTH TLS on the plaintext control socket.
+        const char auth_tls[] = "AUTH TLS\r\n";
+        if (plain->write(auth_tls, static_cast<uint32_t>(sizeof(auth_tls) - 1)) < 0) {
+            return -401;  // FTP_ERR_CONNECT
+        }
+
+        std::string response_buffer;
+        response_buffer.reserve(4096);
+        FtpReply reply;
+        size_t consumed = 0;
+        char buffer[4096];
+        for (;;) {
+            int32_t read_count = plain->read(buffer, sizeof(buffer));
+            if (read_count <= 0) {
+                return read_count == 0 ? -403 : read_count;
+            }
+            response_buffer.append(buffer, static_cast<size_t>(read_count));
+            ParseResult parsed = ReplyParser::parse(response_buffer.data(), response_buffer.size(), reply, consumed);
+            if (parsed == ParseResult::COMPLETE) {
+                break;
+            }
+            if (parsed == ParseResult::MALFORMED || parsed == ParseResult::BUFFER_OVERFLOW) {
+                return -501;  // FTP_ERR_PROTOCOL
+            }
+        }
+        if (reply.code != 234) {
+            return -302;  // FTP_ERR_AUTH_TLS_REQUIRED
+        }
+
+        security::TlsConfig tls_config;
+        tls_config.server_name = creds.host;
+        tls_config.ca_bundle_path = creds.ca_bundle_path;
+        if (creds.verify_cert == 0) {
+            tls_config.verify_mode = security::CertVerifyMode::NONE;
+        } else if (creds.verify_cert == 1) {
+            tls_config.verify_mode = security::CertVerifyMode::PEER;
+        } else {
+            tls_config.verify_mode = security::CertVerifyMode::HOST;
+        }
+
+        void* shared_ctx = security::get_shared_ssl_ctx();
+        if (shared_ctx == nullptr) {
+            return -102;  // FTP_ERR_SYSTEM
+        }
+        auto tls = std::make_unique<security::TlsTransport>(
+            static_cast<SSL_CTX*>(shared_ctx), tls_config);
+        int socket_fd = plain->release_socket();
+        if (socket_fd < 0) {
+            return -401;
+        }
+        ret = tls->adopt_socket(socket_fd, creds.host.c_str(), creds.port);
+        if (ret != 0) {
+            return ret;
+        }
+        tls->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+        ret = tls->handshake();
+        if (ret != 0) {
+            return ret;
+        }
+
+        auto send_tls_command = [&](const char* command) -> int32_t {
+            if (tls->write(command, static_cast<uint32_t>(std::strlen(command))) < 0) {
+                return -401;
+            }
+            std::string command_buffer;
+            command_buffer.reserve(4096);
+            FtpReply command_reply;
+            size_t command_consumed = 0;
+            char command_read_buffer[4096];
+            for (;;) {
+                int32_t command_read = tls->read(command_read_buffer, sizeof(command_read_buffer));
+                if (command_read <= 0) {
+                    return command_read == 0 ? -403 : command_read;
+                }
+                command_buffer.append(command_read_buffer, static_cast<size_t>(command_read));
+                ParseResult command_parsed = ReplyParser::parse(
+                    command_buffer.data(), command_buffer.size(), command_reply, command_consumed);
+                if (command_parsed == ParseResult::COMPLETE) {
+                    break;
+                }
+                if (command_parsed == ParseResult::MALFORMED || command_parsed == ParseResult::BUFFER_OVERFLOW) {
+                    return -501;
+                }
+            }
+            return is_ftp_success(command_reply.code) ? 0 : map_ftp_code_to_error(command_reply.code);
+        };
+
+        // RFC 4217 requires PBSZ before PROT; TLS uses a streaming PBSZ of 0.
+        ret = send_tls_command("PBSZ 0\r\n");
+        if (ret != 0) {
+            return ret;
+        }
+        ret = send_tls_command("PROT P\r\n");
+        if (ret != 0) {
+            return ret;
+        }
+
+        control_transport_ = std::move(tls);
+        ret = control_thread_->start(std::move(control_transport_), creds.host, false);
+    } else {
+        control_transport_ = std::move(plain);
+        ret = control_thread_->start(std::move(control_transport_), creds.host, true);
+    }
     if (ret != 0) {
+        disconnect();
         return ret;
     }
-    
-    // Wait for greeting (first response from server)
-    // The control thread handles this automatically
-    
-    // Authenticate
+
     ret = authenticate(creds.username, creds.password);
     if (ret != 0) {
         disconnect();
         return ret;
     }
-    
     return 0;
 }
 

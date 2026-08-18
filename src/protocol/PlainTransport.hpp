@@ -36,6 +36,10 @@ public:
     int32_t read(void* buffer, uint32_t length) override;
     int32_t write(const void* buffer, uint32_t length) override;
     void set_timeouts(uint32_t connect_timeout_ms, uint32_t io_timeout_ms) override;
+
+    /** Transfer the connected socket to an FTPS transport without closing it. */
+    int release_socket();
+
     int32_t shutdown() override;
     bool is_connected() const override;
 

@@ -180,8 +180,8 @@ def test_version_capabilities(lib):
     caps = ctypes.c_uint64()
     ret = lib.ftp_get_capabilities(ctypes.byref(caps))
     test_assert("ftp_get_capabilities returns OK", ret == FTP_OK)
-    test_assert("M1 reports real plain control capability", (caps.value & 0x0020) != 0)
-    test_assert("M1 does not report TLS capability yet", (caps.value & 0x0001) == 0)
+    test_assert("M2 reports real plain control capability", (caps.value & 0x0020) != 0)
+    test_assert("M2 reports explicit FTPS capability", (caps.value & 0x0001) != 0)
     
     # Test with NULL
     ret = lib.ftp_get_capabilities(None)
@@ -298,7 +298,7 @@ def test_connection(lib):
     creds.port = 21
     creds.username = b"testuser"
     creds.password = b"testpass"
-    creds.use_tls = 1  # Explicit TLS is intentionally unavailable in M1
+    creds.use_tls = 2  # Implicit FTPS is intentionally unavailable in M2
     creds.verify_cert = 0
     creds.ca_bundle_path = None
     
@@ -310,9 +310,9 @@ def test_connection(lib):
     ret = lib.ftp_connect(handle, None)
     test_assert("ftp_connect with NULL creds fails", ret == FTP_ERR_INVALID_ARGUMENT)
     
-    # M1 keeps TLS deterministic until the TLS transport factory is integrated.
+    # M2 keeps implicit FTPS deterministic until the port-990 factory is integrated.
     ret = lib.ftp_connect(handle, ctypes.byref(creds))
-    test_assert("ftp_connect reports TLS not implemented in M1", ret == FTP_ERR_NOT_IMPLEMENTED)
+    test_assert("ftp_connect reports implicit FTPS not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED)
     
     # The failed connect must not transition the handle to CONNECTED.
     ret = lib.ftp_ping(handle)
@@ -338,8 +338,8 @@ def test_connection(lib):
 
 
 def test_upload_dir_stub(lib):
-    """Test the M1 upload contract: validation plus explicit unavailable status."""
-    print("\n=== Testing Upload Directory (M1 Unavailable) ===")
+    """Test the M2 upload contract: validation plus explicit unavailable status."""
+    print("\n=== Testing Upload Directory (M2 Unavailable) ===")
     
     # Setup signature - note: progress callback can be None (ctypes converts NULL automatically)
     lib.ftp_upload_dir.restype = ctypes.c_int32
@@ -362,11 +362,11 @@ def test_upload_dir_stub(lib):
     creds.port = 21
     lib.ftp_connect(handle, ctypes.byref(creds))
     
-    # A valid request is unavailable in M0 regardless of connection state.
+    # A valid request is unavailable in M2 regardless of connection state.
     lib.ftp_disconnect(handle)
     result = FtpResult()
     ret = lib.ftp_upload_dir(handle, b"/local", b"/remote", None, None, None, ctypes.byref(result))
-    test_assert("ftp_upload_dir reports not implemented in M1", ret == FTP_ERR_NOT_IMPLEMENTED)
+    test_assert("ftp_upload_dir reports not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED)
     test_assert("upload result reports not implemented", result.status == FTP_ERR_NOT_IMPLEMENTED)
     
     # Reconnect
@@ -379,9 +379,9 @@ def test_upload_dir_stub(lib):
     ret = lib.ftp_upload_dir(handle, b"/local", None, None, None, None, None)
     test_assert("ftp_upload_dir with NULL remote_path fails", ret == FTP_ERR_INVALID_ARGUMENT)
     
-    # A valid transfer request remains unavailable in M0.
+    # A valid transfer request remains unavailable in M2.
     ret = lib.ftp_upload_dir(handle, b"/local/test", b"/remote/test", None, None, None, ctypes.byref(result))
-    test_assert("ftp_upload_dir reports not implemented in M1", ret == FTP_ERR_NOT_IMPLEMENTED)
+    test_assert("ftp_upload_dir reports not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED)
     
     lib.ftp_client_destroy(handle)
 
