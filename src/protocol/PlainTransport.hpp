@@ -35,6 +35,7 @@ public:
     int32_t connect(const char* host, uint16_t port) override;
     int32_t read(void* buffer, uint32_t length) override;
     int32_t write(const void* buffer, uint32_t length) override;
+    void set_timeouts(uint32_t connect_timeout_ms, uint32_t io_timeout_ms) override;
     int32_t shutdown() override;
     bool is_connected() const override;
 
@@ -62,6 +63,8 @@ private:
     std::string host_;
     uint16_t port_;
     bool connected_;
+    uint32_t connect_timeout_ms_;
+    uint32_t io_timeout_ms_;
 
     // Internal helper methods
     int32_t resolve_host(const char* host, struct sockaddr_storage* addr, socklen_t* addr_len);

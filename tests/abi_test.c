@@ -40,7 +40,8 @@ static void test_version_capabilities(void) {
     uint64_t caps;
     int32_t ret = ftp_get_capabilities(&caps);
     TEST_ASSERT("ftp_get_capabilities returns OK", ret == FTP_OK);
-    TEST_ASSERT("M0 reports no public capabilities", caps == 0);
+    TEST_ASSERT("M1 reports real plain control capability", (caps & FTP_CAP_CONTROL_FTP) != 0);
+    TEST_ASSERT("M1 does not report TLS capability yet", (caps & FTP_CAP_TLS) == 0);
     
     /* Test NULL argument handling */
     ret = ftp_get_capabilities(NULL);
@@ -189,11 +190,11 @@ static void test_connection(void) {
     creds.port = 21;
     creds.username = "testuser";
     creds.password = "testpass";
-    creds.use_tls = FTP_TLS_NONE;
+    creds.use_tls = FTP_TLS_EXPLICIT;
     creds.verify_cert = FTP_VERIFY_NONE;
     
     ret = ftp_connect(handle, &creds);
-    TEST_ASSERT("ftp_connect reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("ftp_connect reports TLS not implemented in M1", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     /* The failed connect must not transition the handle to CONNECTED. */
     ret = ftp_ping(handle);
@@ -217,14 +218,14 @@ static void test_connection(void) {
     
     /* Reconnect remains unavailable until the real session is wired. */
     ret = ftp_connect(handle, &creds);
-    TEST_ASSERT("Reconnect reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("Reconnect reports TLS not implemented in M1", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     ftp_client_destroy(handle);
 }
 
-/* Test: Upload Directory (Phase 1 Stub) */
+/* Test: Upload Directory (M1 Unavailable) */
 static void test_upload_dir_stub(void) {
-    printf("\n=== Testing Upload Directory (Phase 1 Stub) ===\n");
+    printf("\n=== Testing Upload Directory (M1 Unavailable) ===\n");
     
     ftp_client_t* handle = NULL;
     int32_t ret = ftp_client_create(&handle);
@@ -235,7 +236,7 @@ static void test_upload_dir_stub(void) {
     memset(&result, 0, sizeof(result));
     
     ret = ftp_upload_dir(handle, "/local", "/remote", NULL, NULL, NULL, &result);
-    TEST_ASSERT("ftp_upload_dir reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("ftp_upload_dir reports not implemented in M1", ret == FTP_ERR_NOT_IMPLEMENTED);
     TEST_ASSERT("upload result reports not implemented", result.status == FTP_ERR_NOT_IMPLEMENTED);
     
     /* A valid upload request remains unavailable in M0. */
@@ -243,9 +244,10 @@ static void test_upload_dir_stub(void) {
     memset(&creds, 0, sizeof(creds));
     creds.host = "localhost";
     creds.port = 21;
+    creds.use_tls = FTP_TLS_EXPLICIT;
     
     ret = ftp_connect(handle, &creds);
-    TEST_ASSERT("Connect for upload test reports not implemented", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("Connect for upload test reports TLS not implemented", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     /* Test upload with NULL paths */
     ret = ftp_upload_dir(handle, NULL, "/remote", NULL, NULL, NULL, NULL);
@@ -260,7 +262,7 @@ static void test_upload_dir_stub(void) {
     
     /* Test valid upload request reports not implemented in M0. */
     ret = ftp_upload_dir(handle, "/local/test", "/remote/test", NULL, NULL, NULL, &result);
-    TEST_ASSERT("ftp_upload_dir reports not implemented in M0", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("ftp_upload_dir reports not implemented in M1", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     ftp_client_destroy(handle);
 }

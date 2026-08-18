@@ -368,9 +368,8 @@ FTP_API int32_t FTP_CALL ftp_set_timeout_command_ms(ftp_client_t* handle, uint32
  * 
  * @param handle  The client handle
  * @param creds   Pointer to credentials structure (borrowed during the call)
- * @return FTP_ERR_NOT_IMPLEMENTED in the M0 baseline after input validation;
- *         a future implementation will return FTP_OK only after a real
- *         protocol and TLS session is established
+ * @return FTP_OK after a real M1 plain control session is authenticated;
+ *         FTP_ERR_NOT_IMPLEMENTED for TLS modes not yet integrated
  */
 FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials_t* creds);
 
@@ -386,8 +385,7 @@ FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle);
  * Connection health check.
  * 
  * @param handle  The client handle
- * @return FTP_ERR_INVALID_STATE in M0 because no real session exists;
- *         a future implementation will return FTP_OK only after NOOP succeeds
+ * @return FTP_OK only after a real authenticated NOOP succeeds
  */
 FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle);
 
@@ -452,8 +450,8 @@ FTP_API uint32_t FTP_CALL ftp_get_version(void);
 
 /**
  * Fills capability flags that are public and end-to-end tested in this build.
- * M0 returns zero because protocol and transfer subsystems are not yet wired
- * to the exported execution path.
+ * M1 exposes plain FTP control sessions only; TLS and data-transfer flags
+ * remain clear until those paths are integrated and tested end to end.
  * 
  * @param out_caps  Pointer to uint64_t to receive capability bitmask
  * @return FTP_OK on success, FTP_ERR_INVALID_ARGUMENT if out_caps is NULL
@@ -466,6 +464,7 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps);
 #define FTP_CAP_COMPRESSION     0x0004  /* Compression (MODE Z) support */
 #define FTP_CAP_IPV6            0x0008  /* IPv6 support */
 #define FTP_CAP_RESUME          0x0010  /* Resume/REST support */
+#define FTP_CAP_CONTROL_FTP     0x0020  /* Real plain FTP control session */
 
 /* ----------------------------------------------------------------------------
  * 6.6 Security Functions (Phase 3 - Credential Provider & Certificate Validation)
