@@ -243,6 +243,25 @@ set_target_properties(control_integration_test PROPERTIES
 )
 add_test(NAME control_integration_test COMMAND control_integration_test)
 
+# M2 explicit FTPS integration test
+add_executable(ftps_integration_test tests/ftps_integration_test.cpp)
+target_include_directories(ftps_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(ftps_integration_test PRIVATE
+    FTPS_TEST_CERT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ftps_server.crt"
+    FTPS_TEST_KEY_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ftps_server.key"
+)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(ftps_integration_test PRIVATE ftpclient pthread ssl crypto)
+else()
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(ftps_integration_test PRIVATE ftpclient OpenSSL::SSL OpenSSL::Crypto)
+endif()
+set_target_properties(ftps_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME ftps_integration_test COMMAND ftps_integration_test)
+
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
 target_include_directories(header_purity_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
