@@ -11,6 +11,21 @@ from typing import Optional, Tuple, Callable, Any, AsyncContextManager, ContextM
 import asyncio
 
 
+# M13 policy constants
+FTP_VERIFY_POLICY_NONE: int
+FTP_VERIFY_POLICY_LOCAL_EXPECTED: int
+FTP_VERIFY_POLICY_REMOTE_OPTIONAL: int
+FTP_VERIFY_POLICY_REMOTE_REQUIRED: int
+FTP_VERIFY_POLICY_LOCAL_AND_REMOTE: int
+FTP_RETRY_CATEGORY_NETWORK: int
+FTP_RETRY_CATEGORY_SERVER: int
+FTP_RETRY_CATEGORY_AMBIGUOUS: int
+FTP_RETRY_CATEGORY_AUTH: int
+FTP_RETRY_CATEGORY_PROTOCOL: int
+FTP_RETRY_CATEGORY_LOCAL: int
+FTP_RETRY_CATEGORY_DEFAULT: int
+
+
 # ============================================================================
 # Data Types
 # ============================================================================
