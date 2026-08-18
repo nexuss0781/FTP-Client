@@ -1,0 +1,33 @@
+{
+  "target_type": "cpanel_passenger_node",
+  "deployment_root": "nodejs_app",
+  "startup_file": "app.js",
+  "application_url": "/api",
+  "node_version": "provider_managed",
+  "install_dependencies": "cpanel_uapi_or_control_panel",
+  "activation": {
+    "method": "passenger_restart_file",
+    "path": "tmp/restart.txt"
+  },
+  "health_check": {
+    "path": "/health",
+    "expected_status": 200,
+    "timeout_seconds": 15
+  },
+  "required_provider_capabilities": [
+    "cloudlinux_or_passenger_node_support",
+    "application_registration",
+    "npm_dependency_installation",
+    "reverse_proxy_or_application_url",
+    "restart_control"
+  ],
+  "never_upload": [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "node_modules",
+    ".git",
+    "logs"
+  ]
+}
