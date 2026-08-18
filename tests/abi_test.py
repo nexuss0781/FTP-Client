@@ -90,6 +90,8 @@ class FtpDownloadOptions(ctypes.Structure):
         ("struct_size", ctypes.c_uint32),
         ("stall_timeout_ms", ctypes.c_uint32),
         ("expected_sha256", ctypes.c_char_p),
+        ("resume_enabled", ctypes.c_int32),
+        ("resume_metadata_enabled", ctypes.c_int32),
     ]
 
 
@@ -227,15 +229,28 @@ def test_version_capabilities(lib):
 def test_m8_exports(lib):
     """Validate M8 exported symbols and cancellation preconditions."""
     print("\\n=== Testing M8 Exports ===")
-    for symbol in ("ftp_download_file_ex", "ftp_cancel", "ftp_clear_cancel"):
+    for symbol in ("ftp_download_file_ex", "ftp_download_dir", "ftp_cancel", "ftp_clear_cancel"):
         test_assert(f"{symbol} is exported", hasattr(lib, symbol))
 
     lib.ftp_cancel.restype = ctypes.c_int32
     lib.ftp_cancel.argtypes = [ctypes.c_void_p]
     lib.ftp_clear_cancel.restype = ctypes.c_int32
     lib.ftp_clear_cancel.argtypes = [ctypes.c_void_p]
+    lib.ftp_download_dir.restype = ctypes.c_int32
+    lib.ftp_download_dir.argtypes = [
+        ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+        ctypes.POINTER(FtpDownloadOptions), ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.POINTER(FtpResult)
+    ]
     test_assert("ftp_cancel NULL handle fails", lib.ftp_cancel(None) == FTP_ERR_INVALID_HANDLE)
     test_assert("ftp_clear_cancel NULL handle fails", lib.ftp_clear_cancel(None) == FTP_ERR_INVALID_HANDLE)
+    handle = ctypes.c_void_p()
+    lib.ftp_client_create(ctypes.byref(handle))
+    result = FtpResult()
+    test_assert("ftp_download_dir without connection fails", lib.ftp_download_dir(
+        handle, b"/tmp/m9", b"/deploy", None, None, None,
+        ctypes.byref(result)) == FTP_ERR_INVALID_STATE)
+    lib.ftp_client_destroy(handle)
 
 
 def test_handle_lifecycle(lib):

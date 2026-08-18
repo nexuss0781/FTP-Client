@@ -210,6 +210,16 @@ if(MSVC)
         "    ftp_disconnect\n"
         "    ftp_ping\n"
         "    ftp_upload_dir\n"
+        "    ftp_download_file\n"
+        "    ftp_download_file_ex\n"
+        "    ftp_download_dir\n"
+        "    ftp_cancel\n"
+        "    ftp_clear_cancel\n"
+        "    ftp_change_directory\n"
+        "    ftp_parent_directory\n"
+        "    ftp_delete_remote_file\n"
+        "    ftp_remove_remote_directory\n"
+        "    ftp_rename_remote\n"
         "    ftp_result_free\n"
         "    ftp_get_version\n"
         "    ftp_get_capabilities\n"
@@ -329,6 +339,16 @@ set_target_properties(m9_remote_listing_test PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 add_test(NAME m9_remote_listing_test COMMAND m9_remote_listing_test)
+
+# M9 recursive MLSD directory-download integration test
+add_executable(m9_download_dir_integration_test tests/m9_download_dir_integration_test.cpp)
+target_include_directories(m9_download_dir_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(m9_download_dir_integration_test PRIVATE ftpclient pthread)
+set_target_properties(m9_download_dir_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME m9_download_dir_integration_test COMMAND m9_download_dir_integration_test)
 
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
