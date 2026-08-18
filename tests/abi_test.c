@@ -40,8 +40,11 @@ static void test_version_capabilities(void) {
     uint64_t caps;
     int32_t ret = ftp_get_capabilities(&caps);
     TEST_ASSERT("ftp_get_capabilities returns OK", ret == FTP_OK);
-    TEST_ASSERT("M2 reports real plain control capability", (caps & FTP_CAP_CONTROL_FTP) != 0);
-    TEST_ASSERT("M2 reports explicit FTPS capability", (caps & FTP_CAP_TLS) != 0);
+    TEST_ASSERT("M4 reports real plain control capability", (caps & FTP_CAP_CONTROL_FTP) != 0);
+    TEST_ASSERT("M4 reports explicit FTPS capability", (caps & FTP_CAP_TLS) != 0);
+    TEST_ASSERT("M4 reports plain passive data capability", (caps & FTP_CAP_DATA_FTP) != 0);
+    TEST_ASSERT("M4 reports protected passive data capability", (caps & FTP_CAP_DATA_FTPS) != 0);
+    TEST_ASSERT("M4 reports REST resume capability", (caps & FTP_CAP_RESUME) != 0);
     
     /* Test NULL argument handling */
     ret = ftp_get_capabilities(NULL);
@@ -218,14 +221,14 @@ static void test_connection(void) {
     
     /* Reconnect remains unavailable until the real session is wired. */
     ret = ftp_connect(handle, &creds);
-    TEST_ASSERT("Reconnect reports implicit FTPS not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("Reconnect reports implicit FTPS not implemented in M4", ret == FTP_ERR_NOT_IMPLEMENTED);
     
     ftp_client_destroy(handle);
 }
 
-/* Test: Upload Directory (M3 Single-File Path) */
+/* Test: Upload Directory (M4 Orchestration Path) */
 static void test_upload_dir_stub(void) {
-    printf("\n=== Testing Upload Directory (M3 Single-File Path) ===\n");
+    printf("\n=== Testing Upload Directory (M4 Orchestration Path) ===\n");
     
     ftp_client_t* handle = NULL;
     int32_t ret = ftp_client_create(&handle);

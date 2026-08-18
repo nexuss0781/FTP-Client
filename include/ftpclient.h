@@ -66,8 +66,7 @@ typedef struct ftp_client_internal ftp_client_t;
  * 
  * Ownership Semantics:
  *   - All const char* fields are borrowed references during the call
- *   - M0 validates these fields but does not establish a session or retain them
- *   - A future connected implementation will deep-copy credentials only for the
+ *   - The implementation validates and deep-copies credentials for the
  *     lifetime of the authenticated session
  */
 typedef struct {
@@ -452,9 +451,8 @@ FTP_API uint32_t FTP_CALL ftp_get_version(void);
 
 /**
  * Fills capability flags that are public and end-to-end tested in this build.
- * M2 exposes plain FTP and explicit-FTPS control sessions. Data-transfer
- * flags remain clear until the protected data channel is integrated and tested
- * end to end.
+ * M4 exposes plain FTP and explicit-FTPS control plus passive data transfer,
+ * protected data transfer, and conservative REST resume support.
  * 
  * @param out_caps  Pointer to uint64_t to receive capability bitmask
  * @return FTP_OK on success, FTP_ERR_INVALID_ARGUMENT if out_caps is NULL
@@ -468,6 +466,8 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps);
 #define FTP_CAP_IPV6            0x0008  /* IPv6 support */
 #define FTP_CAP_RESUME          0x0010  /* Resume/REST support */
 #define FTP_CAP_CONTROL_FTP     0x0020  /* Real plain FTP control session */
+#define FTP_CAP_DATA_FTP        0x0040  /* Real plain FTP passive data transfer */
+#define FTP_CAP_DATA_FTPS       0x0080  /* Real explicit-FTPS protected data transfer */
 
 /* ----------------------------------------------------------------------------
  * 6.6 Security Functions (Phase 3 - Credential Provider & Certificate Validation)
