@@ -21,6 +21,7 @@
 #include "Integrity.hpp"
 #include "RemoteListing.hpp"
 #include "../transfer/Verification.hpp"
+#include "../resilience/RetryPolicy.hpp"
 #include <memory>
 #include <string>
 #include <cstring>
@@ -91,6 +92,15 @@ struct TransferOptions {
     bool resume_allow_unverified = false;
     std::string expected_sha256;
     bool verify_remote_hash = false;
+    uint32_t verification_policy = 0;
+    std::string verification_algorithm = "SHA-256";
+    uint32_t retry_attempts = 3;
+    uint64_t retry_base_delay_ms = 1000;
+    uint64_t retry_max_delay_ms = 30000;
+    uint64_t retry_max_elapsed_ms = 0;
+    uint32_t retry_categories = resilience::kRetryCategoryDefault;
+    double retry_jitter_factor = 1.0;
+    int32_t retry_all_errors = 0;
 };
 
 /**
@@ -877,6 +887,8 @@ inline bool resume_metadata_matches(const std::filesystem::path& path,
     return version_ok && remote_ok && size_ok && expected_ok && bytes_ok;
 }
 
+inline std::string uppercase_feature_token(std::string token);
+
 inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
                                               uint64_t* out_bytes_received,
                                               const ProgressCallback& progress,
@@ -1185,44 +1197,89 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
     }
 
     VerificationMetadata verification;
-    if (!options.expected_sha256.empty() || options.verify_remote_hash) {
+    uint32_t verification_policy = options.verification_policy;
+    if (verification_policy == kVerificationPolicyNone) {
+        if (!options.expected_sha256.empty() && options.verify_remote_hash) {
+            verification_policy = kVerificationPolicyLocalAndRemote;
+        } else if (!options.expected_sha256.empty()) {
+            verification_policy = kVerificationPolicyLocalExpected;
+        } else if (options.verify_remote_hash) {
+            verification_policy = kVerificationPolicyRemoteOptional;
+        }
+    }
+    if (verification_policy > kVerificationPolicyLocalAndRemote) {
+        return -202;
+    }
+    if (verification_policy != kVerificationPolicyNone) {
+        const std::string algorithm = options.verification_algorithm.empty()
+            ? std::string("SHA-256") : uppercase_feature_token(options.verification_algorithm);
+        if (algorithm != "SHA-256" && algorithm != "SHA256") {
+            verification.status = kVerificationStatusUnavailable;
+            verification.algorithm = options.verification_algorithm;
+            if (out_verification != nullptr) *out_verification = verification;
+            fs::remove(temp_path, fs_error);
+            return -204;
+        }
         verification.algorithm = "SHA-256";
-        verification.sources |= 0x0001; /* FTP_VERIFY_SOURCE_LOCAL */
-        std::string actual_sha256;
-        if (!integrity::sha256_file(temp_path.string(), actual_sha256)) {
-            verification.status = 3; /* FTP_VERIFY_STATUS_UNAVAILABLE */
+        const bool need_local = verification_policy == kVerificationPolicyLocalExpected ||
+                                verification_policy == kVerificationPolicyLocalAndRemote;
+        const bool need_remote = verification_policy == kVerificationPolicyRemoteOptional ||
+                                 verification_policy == kVerificationPolicyRemoteRequired ||
+                                 verification_policy == kVerificationPolicyLocalAndRemote;
+        if (verification_policy == kVerificationPolicyLocalExpected &&
+            options.expected_sha256.empty()) {
+            verification.status = kVerificationStatusUnavailable;
+            verification.algorithm = "SHA-256";
             if (out_verification != nullptr) *out_verification = verification;
             fs::remove(temp_path, fs_error);
-            return -601;
+            return -202;
         }
-        verification.local_digest = actual_sha256;
-        if (!options.expected_sha256.empty() &&
-            actual_sha256 != integrity::normalize_sha256(options.expected_sha256)) {
-            verification.status = 2; /* FTP_VERIFY_STATUS_FAILED */
-            if (out_verification != nullptr) *out_verification = verification;
-            fs::remove(temp_path, fs_error);
-            return -606;
-        }
-        if (options.verify_remote_hash) {
-            verification.sources |= 0x0002; /* FTP_VERIFY_SOURCE_REMOTE */
-            std::string remote_hash;
-            const int32_t hash_status = get_remote_file_hash(
-                entry.remote_relative_path, "SHA-256", &remote_hash);
-            if (hash_status != 0) {
-                verification.status = 3; /* FTP_VERIFY_STATUS_UNAVAILABLE */
+        if (need_local) {
+            verification.sources |= kVerificationSourceLocal;
+            std::string actual_sha256;
+            if (!integrity::sha256_file(temp_path.string(), actual_sha256)) {
+                verification.status = kVerificationStatusUnavailable;
                 if (out_verification != nullptr) *out_verification = verification;
                 fs::remove(temp_path, fs_error);
-                return hash_status;
+                return -601;
             }
-            verification.remote_digest = remote_hash;
-            if (verification.local_digest != verification.remote_digest) {
-                verification.status = 2; /* FTP_VERIFY_STATUS_FAILED */
+            verification.local_digest = actual_sha256;
+            if (!options.expected_sha256.empty() &&
+                actual_sha256 != integrity::normalize_sha256(options.expected_sha256)) {
+                verification.status = kVerificationStatusFailed;
                 if (out_verification != nullptr) *out_verification = verification;
                 fs::remove(temp_path, fs_error);
                 return -606;
             }
         }
-        verification.status = 1; /* FTP_VERIFY_STATUS_PASSED */
+        if (need_remote) {
+            verification.sources |= kVerificationSourceRemote;
+            std::string remote_hash;
+            const int32_t hash_status = get_remote_file_hash(
+                entry.remote_relative_path, algorithm, &remote_hash);
+            if (hash_status != 0) {
+                verification.status = kVerificationStatusUnavailable;
+                if (out_verification != nullptr) *out_verification = verification;
+                if (verification_policy == kVerificationPolicyRemoteOptional) {
+                    verification.status = kVerificationStatusUnavailable;
+                } else {
+                    fs::remove(temp_path, fs_error);
+                    return hash_status;
+                }
+            } else {
+                verification.remote_digest = remote_hash;
+                if (verification_policy == kVerificationPolicyLocalAndRemote &&
+                    verification.local_digest != verification.remote_digest) {
+                    verification.status = kVerificationStatusFailed;
+                    if (out_verification != nullptr) *out_verification = verification;
+                    fs::remove(temp_path, fs_error);
+                    return -606;
+                }
+            }
+        }
+        if (verification.status == kVerificationStatusNone) {
+            verification.status = kVerificationStatusPassed;
+        }
     }
 
     if (out_verification != nullptr) *out_verification = verification;

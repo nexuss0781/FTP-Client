@@ -381,6 +381,29 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
                                     sizeof(options->resume_metadata_enabled)) {
             config.resume_metadata_enabled = options->resume_metadata_enabled;
         }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, retry_max_delay_ms) +
+                                    sizeof(options->retry_max_delay_ms) &&
+            options->retry_max_delay_ms > 0) {
+            config.retry_max_delay_ms = options->retry_max_delay_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, retry_max_elapsed_ms) +
+                                    sizeof(options->retry_max_elapsed_ms)) {
+            config.retry_max_elapsed_ms = options->retry_max_elapsed_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, retry_categories) +
+                                    sizeof(options->retry_categories) &&
+            options->retry_categories != 0) {
+            config.retry_categories = options->retry_categories;
+        }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, retry_jitter_factor) +
+                                    sizeof(options->retry_jitter_factor) &&
+            options->retry_jitter_factor >= 0.0 && options->retry_jitter_factor <= 1.0) {
+            config.retry_jitter_factor = options->retry_jitter_factor;
+        }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, retry_all_errors) +
+                                    sizeof(options->retry_all_errors)) {
+            config.retry_all_errors = options->retry_all_errors != 0;
+        }
     }
 
     std::vector<ftpclient::transfer::FileResult> file_results;
@@ -522,12 +545,53 @@ FTP_API int32_t FTP_CALL ftp_download_file_ex(
             transfer_options.resume_metadata_enabled = false;
             transfer_options.resume_allow_unverified = true;
         }
-        if (options->struct_size >= offsetof(ftp_download_options_t, verify_remote_hash) +
+                if (options->struct_size >= offsetof(ftp_download_options_t, verify_remote_hash) +
                                     sizeof(options->verify_remote_hash)) {
             transfer_options.verify_remote_hash = options->verify_remote_hash != 0;
         }
+        if (options->struct_size >= offsetof(ftp_download_options_t, verification_policy) +
+                                    sizeof(options->verification_policy)) {
+            transfer_options.verification_policy = options->verification_policy;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, verification_algorithm) +
+                                    sizeof(options->verification_algorithm)) {
+            transfer_options.verification_algorithm = options->verification_algorithm
+                ? options->verification_algorithm : "SHA-256";
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_attempts) +
+                                    sizeof(options->retry_attempts) &&
+            options->retry_attempts > 0) {
+            transfer_options.retry_attempts = options->retry_attempts;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_base_delay_ms) +
+                                    sizeof(options->retry_base_delay_ms) &&
+            options->retry_base_delay_ms > 0) {
+            transfer_options.retry_base_delay_ms = options->retry_base_delay_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_max_delay_ms) +
+                                    sizeof(options->retry_max_delay_ms) &&
+            options->retry_max_delay_ms > 0) {
+            transfer_options.retry_max_delay_ms = options->retry_max_delay_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_max_elapsed_ms) +
+                                    sizeof(options->retry_max_elapsed_ms)) {
+            transfer_options.retry_max_elapsed_ms = options->retry_max_elapsed_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_categories) +
+                                    sizeof(options->retry_categories) &&
+            options->retry_categories != 0) {
+            transfer_options.retry_categories = options->retry_categories;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_jitter_factor) +
+                                    sizeof(options->retry_jitter_factor) &&
+            options->retry_jitter_factor >= 0.0 && options->retry_jitter_factor <= 1.0) {
+            transfer_options.retry_jitter_factor = options->retry_jitter_factor;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_all_errors) +
+                                    sizeof(options->retry_all_errors)) {
+            transfer_options.retry_all_errors = options->retry_all_errors != 0;
+        }
     }
-
     try {
         ftpclient::protocol::FileManifestEntry entry;
         entry.local_absolute_path = local_path;
@@ -545,9 +609,23 @@ FTP_API int32_t FTP_CALL ftp_download_file_ex(
         }
 
         uint64_t bytes_received = 0;
+        uint32_t attempt_count = 0;
         ftpclient::VerificationMetadata verification;
-        int32_t status = impl->getProtocolEngine().download_file(
-            entry, &bytes_received, progress, transfer_options, &verification);
+        ftpclient::resilience::RetryConfig retry_config;
+        retry_config.max_attempts = transfer_options.retry_attempts;
+        retry_config.base_delay_ms = transfer_options.retry_base_delay_ms;
+        retry_config.max_delay_ms = transfer_options.retry_max_delay_ms;
+        retry_config.max_elapsed_ms = transfer_options.retry_max_elapsed_ms;
+        retry_config.retry_categories = transfer_options.retry_categories;
+        retry_config.jitter_factor = transfer_options.retry_jitter_factor;
+        retry_config.retry_all_errors = transfer_options.retry_all_errors;
+        ftpclient::resilience::RetryPolicy retry_policy(retry_config);
+        int32_t status = retry_policy.execute_with_retry([&]() {
+            bytes_received = 0;
+            verification = ftpclient::VerificationMetadata();
+            return impl->getProtocolEngine().download_file(
+                entry, &bytes_received, progress, transfer_options, &verification);
+        }, &attempt_count);
         if (out_result != nullptr) {
             out_result->status = status;
             out_result->files_total = 1;
@@ -564,7 +642,7 @@ FTP_API int32_t FTP_CALL ftp_download_file_ex(
             out_result->file_results[0].remote_path = remote_copy;
             out_result->file_results[0].status = status;
             out_result->file_results[0].bytes_sent = bytes_received;
-            out_result->file_results[0].attempt_count = 1;
+            out_result->file_results[0].attempt_count = attempt_count == 0 ? 1 : attempt_count;
             out_result->file_results[0].final_error = status;
             copy_verification_to_c_result(verification, out_result->file_results[0]);
         }
@@ -631,6 +709,48 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
         if (options->struct_size >= offsetof(ftp_download_options_t, verify_remote_hash) +
                                     sizeof(options->verify_remote_hash)) {
             transfer_options.verify_remote_hash = options->verify_remote_hash != 0;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, verification_policy) +
+                                    sizeof(options->verification_policy)) {
+            transfer_options.verification_policy = options->verification_policy;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, verification_algorithm) +
+                                    sizeof(options->verification_algorithm)) {
+            transfer_options.verification_algorithm = options->verification_algorithm
+                ? options->verification_algorithm : "SHA-256";
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_attempts) +
+                                    sizeof(options->retry_attempts) &&
+            options->retry_attempts > 0) {
+            transfer_options.retry_attempts = options->retry_attempts;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_base_delay_ms) +
+                                    sizeof(options->retry_base_delay_ms) &&
+            options->retry_base_delay_ms > 0) {
+            transfer_options.retry_base_delay_ms = options->retry_base_delay_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_max_delay_ms) +
+                                    sizeof(options->retry_max_delay_ms) &&
+            options->retry_max_delay_ms > 0) {
+            transfer_options.retry_max_delay_ms = options->retry_max_delay_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_max_elapsed_ms) +
+                                    sizeof(options->retry_max_elapsed_ms)) {
+            transfer_options.retry_max_elapsed_ms = options->retry_max_elapsed_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_categories) +
+                                    sizeof(options->retry_categories) &&
+            options->retry_categories != 0) {
+            transfer_options.retry_categories = options->retry_categories;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_jitter_factor) +
+                                    sizeof(options->retry_jitter_factor) &&
+            options->retry_jitter_factor >= 0.0 && options->retry_jitter_factor <= 1.0) {
+            transfer_options.retry_jitter_factor = options->retry_jitter_factor;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, retry_all_errors) +
+                                    sizeof(options->retry_all_errors)) {
+            transfer_options.retry_all_errors = options->retry_all_errors != 0;
         }
     }
     const ftp_download_digest_t* file_digests = nullptr;
@@ -722,6 +842,15 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
             transfer_config.resume_metadata_enabled = transfer_options.resume_metadata_enabled ? 1 : 0;
             transfer_config.resume_allow_unverified = transfer_options.resume_allow_unverified ? 1 : 0;
             transfer_config.verify_remote_hash = transfer_options.verify_remote_hash;
+            transfer_config.verification_policy = transfer_options.verification_policy;
+            transfer_config.verification_algorithm = transfer_options.verification_algorithm;
+            transfer_config.retry_attempts = transfer_options.retry_attempts;
+            transfer_config.retry_base_delay_ms = transfer_options.retry_base_delay_ms;
+            transfer_config.retry_max_delay_ms = transfer_options.retry_max_delay_ms;
+            transfer_config.retry_max_elapsed_ms = transfer_options.retry_max_elapsed_ms;
+            transfer_config.retry_categories = transfer_options.retry_categories;
+            transfer_config.retry_jitter_factor = transfer_options.retry_jitter_factor;
+            transfer_config.retry_all_errors = transfer_options.retry_all_errors;
             transfer_config.cancel_token = impl->getCancelToken();
             if (options != nullptr &&
                 options->struct_size >= offsetof(ftp_download_options_t, max_parallel) +

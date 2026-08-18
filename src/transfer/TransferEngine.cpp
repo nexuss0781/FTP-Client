@@ -165,6 +165,10 @@ void TransferEngine::execute_upload_task(Task& task, protocol::ProtocolEngine* s
     retry_config.max_attempts = config_.retry_attempts;
     retry_config.base_delay_ms = config_.retry_base_delay_ms;
     retry_config.max_delay_ms = config_.retry_max_delay_ms;
+    retry_config.max_elapsed_ms = config_.retry_max_elapsed_ms;
+    retry_config.retry_categories = config_.retry_categories;
+    retry_config.jitter_factor = config_.retry_jitter_factor;
+    retry_config.retry_all_errors = config_.retry_all_errors;
     resilience::RetryPolicy retry_policy(retry_config);
 
     std::string source_sha256;
@@ -241,6 +245,7 @@ void TransferEngine::execute_upload_task(Task& task, protocol::ProtocolEngine* s
         }, &attempts);
     }
 
+    task.attempt_count = attempts == 0 ? 1 : attempts;
     task.bytes_sent = bytes_sent;
     if (task.progress_cb) {
         std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -313,22 +318,39 @@ void TransferEngine::execute_download_task(Task& task, protocol::ProtocolEngine*
     options.resume_allow_unverified = config_.resume_allow_unverified != 0;
     options.expected_sha256 = task.expected_sha256;
     options.verify_remote_hash = config_.verify_remote_hash;
+    options.verification_policy = config_.verification_policy;
+    options.verification_algorithm = config_.verification_algorithm;
+
+    resilience::RetryConfig retry_config;
+    retry_config.max_attempts = config_.retry_attempts;
+    retry_config.base_delay_ms = config_.retry_base_delay_ms;
+    retry_config.max_delay_ms = config_.retry_max_delay_ms;
+    retry_config.max_elapsed_ms = config_.retry_max_elapsed_ms;
+    retry_config.retry_categories = config_.retry_categories;
+    retry_config.jitter_factor = config_.retry_jitter_factor;
+    retry_config.retry_all_errors = config_.retry_all_errors;
+    resilience::RetryPolicy retry_policy(retry_config);
 
     ProgressState state;
     state.bytes_total = task.file_size;
     uint64_t bytes_received = 0;
-    task.verification = VerificationMetadata();
-    task.result_status = active_session.download_file(
-        entry, &bytes_received,
-        [&](uint64_t current, uint64_t total) {
-            state.bytes_current = current;
-            state.bytes_total = total;
-            std::lock_guard<std::mutex> lock(progress_mutex_);
-            invoke_progress_callback(
-                task.local_path, task.remote_path, current, total,
-                reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
-                task.progress_user_data, state);
-        }, options, &task.verification);
+    uint32_t attempts = 0;
+    task.result_status = retry_policy.execute_with_retry([&]() {
+        bytes_received = 0;
+        task.verification = VerificationMetadata();
+        return active_session.download_file(
+            entry, &bytes_received,
+            [&](uint64_t current, uint64_t total) {
+                state.bytes_current = current;
+                state.bytes_total = total;
+                std::lock_guard<std::mutex> lock(progress_mutex_);
+                invoke_progress_callback(
+                    task.local_path, task.remote_path, current, total,
+                    reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
+                    task.progress_user_data, state);
+            }, options, &task.verification);
+    }, &attempts);
+    task.attempt_count = attempts == 0 ? 1 : attempts;
     task.bytes_sent = bytes_received;
     if (task.progress_cb) {
         std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -339,7 +361,7 @@ void TransferEngine::execute_download_task(Task& task, protocol::ProtocolEngine*
     }
     result_aggregator_.record_result(
         task.local_path, task.remote_path, task.result_status, task.bytes_sent,
-        1, task.result_status, task.verification);
+        task.attempt_count, task.result_status, task.verification);
     if (task.bytes_sent > 0) {
         result_aggregator_.add_bytes_transferred(task.bytes_sent);
     }
