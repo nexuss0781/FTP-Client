@@ -259,6 +259,92 @@ void TransferEngine::execute_upload_task(Task& task, protocol::ProtocolEngine* s
     }
 }
 
+int32_t TransferEngine::download_directory(
+    const std::vector<DownloadManifestEntry>& files,
+    ftp_progress_cb_t progress_cb,
+    void* progress_user_data
+) {
+    result_aggregator_.clear();
+    cancel_flag_.store(false, std::memory_order_release);
+    if (config_.cancel_token) {
+        config_.cancel_token->store(false, std::memory_order_release);
+    }
+    result_aggregator_.set_files_total(files.size());
+    if (files.empty()) return 0;
+
+    const bool use_parallel_sessions = files.size() > 1 &&
+                                       thread_pool_.get_worker_count() > 1;
+    for (const auto& file : files) {
+        Task task;
+        task.type = TaskType::DOWNLOAD_FILE;
+        task.local_path = file.entry.local_absolute_path;
+        task.remote_path = file.entry.remote_relative_path;
+        task.expected_sha256 = file.expected_sha256;
+        task.file_size = file.entry.size_bytes;
+        task.progress_cb = reinterpret_cast<void*>(progress_cb);
+        task.progress_user_data = progress_user_data;
+        if (use_parallel_sessions) {
+            if (!thread_pool_.enqueue(std::move(task))) {
+                cancel_flag_.store(true, std::memory_order_release);
+                break;
+            }
+        } else {
+            execute_download_task(task);
+        }
+    }
+    if (use_parallel_sessions) {
+        thread_pool_.wait_for_all();
+    }
+    return result_aggregator_.get_worst_status();
+}
+
+void TransferEngine::execute_download_task(Task& task, protocol::ProtocolEngine* session) {
+    protocol::ProtocolEngine& active_session = session != nullptr ? *session : protocol_engine_;
+    protocol::FileManifestEntry entry;
+    entry.local_absolute_path = task.local_path;
+    entry.remote_relative_path = task.remote_path;
+    entry.size_bytes = task.file_size;
+
+    protocol::TransferOptions options;
+    options.cancel_token = config_.cancel_token;
+    options.stall_timeout_ms = config_.stall_timeout_ms;
+    options.resume_enabled = config_.resume_enabled != 0;
+    options.resume_metadata_enabled = config_.resume_metadata_enabled != 0;
+    options.resume_allow_unverified = config_.resume_allow_unverified != 0;
+    options.expected_sha256 = task.expected_sha256;
+    options.verify_remote_hash = config_.verify_remote_hash;
+
+    ProgressState state;
+    state.bytes_total = task.file_size;
+    uint64_t bytes_received = 0;
+    task.verification = VerificationMetadata();
+    task.result_status = active_session.download_file(
+        entry, &bytes_received,
+        [&](uint64_t current, uint64_t total) {
+            state.bytes_current = current;
+            state.bytes_total = total;
+            std::lock_guard<std::mutex> lock(progress_mutex_);
+            invoke_progress_callback(
+                task.local_path, task.remote_path, current, total,
+                reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
+                task.progress_user_data, state);
+        }, options, &task.verification);
+    task.bytes_sent = bytes_received;
+    if (task.progress_cb) {
+        std::lock_guard<std::mutex> lock(progress_mutex_);
+        auto cb = reinterpret_cast<ftp_progress_cb_t>(task.progress_cb);
+        cb(task.local_path.c_str(), task.remote_path.c_str(),
+           state.bytes_current, state.bytes_total, state.bytes_per_second,
+           task.progress_user_data);
+    }
+    result_aggregator_.record_result(
+        task.local_path, task.remote_path, task.result_status, task.bytes_sent,
+        1, task.result_status, task.verification);
+    if (task.bytes_sent > 0) {
+        result_aggregator_.add_bytes_transferred(task.bytes_sent);
+    }
+}
+
 void TransferEngine::execute_worker_task(Task& task, uint32_t worker_id) {
     try {
         if (worker_id >= worker_sessions_.size()) {
@@ -276,13 +362,18 @@ void TransferEngine::execute_worker_task(Task& task, uint32_t worker_id) {
             if (connect_status != 0) {
                 task.result_status = connect_status;
                 result_aggregator_.record_result(task.local_path, task.remote_path,
-                                                  connect_status, 0, 1, connect_status);
+                                                  connect_status, 0, 1, connect_status,
+                                                  task.verification);
                 session->disconnect();
                 return;
             }
         }
 
-        execute_upload_task(task, session.get());
+        if (task.type == TaskType::DOWNLOAD_FILE) {
+            execute_download_task(task, session.get());
+        } else {
+            execute_upload_task(task, session.get());
+        }
         if (task.result_status != 0 || !session->is_authenticated()) {
             session->disconnect();
             session.reset();
@@ -295,7 +386,7 @@ void TransferEngine::execute_worker_task(Task& task, uint32_t worker_id) {
         task.result_status = -501;  // FTP_ERR_PROTOCOL
         result_aggregator_.record_result(task.local_path, task.remote_path,
                                           task.result_status, 0, 1,
-                                          task.result_status);
+                                          task.result_status, task.verification);
     }
 }
 
