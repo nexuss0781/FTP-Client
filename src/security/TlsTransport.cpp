@@ -13,7 +13,17 @@
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 
+#ifndef _WIN32
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+#else
+#include <winsock2.h>
+#endif
+
 // Error codes matching Phase 1 ABI
+static constexpr int32_t ERR_INVALID_ARGUMENT = -202;
+static constexpr int32_t ERR_INVALID_STATE = -203;
 static constexpr int32_t ERR_CONNECT = -401;
 static constexpr int32_t ERR_TIMEOUT = -402;
 static constexpr int32_t ERR_NETWORK_RESET = -403;
@@ -24,6 +34,7 @@ namespace ftpclient { namespace security {
 
 TlsTransport::TlsTransport(SSL_CTX* shared_ctx, const TlsConfig& config)
     : ssl_ctx_(shared_ctx)
+    , owned_ctx_(nullptr)
     , ssl_(nullptr)
     , bio_(nullptr)
     , config_(config)
@@ -33,6 +44,8 @@ TlsTransport::TlsTransport(SSL_CTX* shared_ctx, const TlsConfig& config)
     , connected_(false)
     , tls_established_(false)
     , implicit_mode_(false)
+    , connect_timeout_ms_(5000)
+    , io_timeout_ms_(30000)
 {
 }
 
@@ -53,15 +66,54 @@ bool TlsTransport::is_tls_established() const {
 }
 
 int32_t TlsTransport::init_ssl() {
-    // Create new SSL object
-    ssl_ = SSL_new(ssl_ctx_);
-    if (!ssl_) {
+    if (ssl_ctx_ == nullptr) {
         return ERR_PROTOCOL;
     }
 
-    // Set SNI hostname if not an IP address
-    if (!host_.empty() && !config_.server_name.empty()) {
-        SSL_set_tlsext_host_name(ssl_, config_.server_name.c_str());
+    SSL_CTX* active_ctx = ssl_ctx_;
+    if (!config_.ca_bundle_path.empty()) {
+        owned_ctx_ = SSL_CTX_new(TLS_client_method());
+        if (!owned_ctx_ ||
+            SSL_CTX_set_min_proto_version(owned_ctx_, TLS1_2_VERSION) != 1 ||
+            SSL_CTX_set_default_verify_paths(owned_ctx_) != 1 ||
+            SSL_CTX_load_verify_locations(owned_ctx_, config_.ca_bundle_path.c_str(), nullptr) != 1) {
+            if (owned_ctx_) {
+                SSL_CTX_free(owned_ctx_);
+                owned_ctx_ = nullptr;
+            }
+            return ERR_CERT_VERIFY;
+        }
+        SSL_CTX_set_session_cache_mode(owned_ctx_, SSL_SESS_CACHE_CLIENT);
+        active_ctx = owned_ctx_;
+    }
+
+    // Create new SSL object
+    ssl_ = SSL_new(active_ctx);
+    if (!ssl_) {
+        if (owned_ctx_) {
+            SSL_CTX_free(owned_ctx_);
+            owned_ctx_ = nullptr;
+        }
+        return ERR_PROTOCOL;
+    }
+
+    // Use the configured server name, or the connected host, for both SNI
+    // and OpenSSL's standards-compliant certificate hostname verification.
+    const std::string& reference_host = config_.server_name.empty() ? host_ : config_.server_name;
+    if (!reference_host.empty()) {
+        if (SSL_set_tlsext_host_name(ssl_, reference_host.c_str()) != 1) {
+            SSL_free(ssl_);
+            ssl_ = nullptr;
+            bio_ = nullptr;
+            return ERR_PROTOCOL;
+        }
+        if (config_.verify_mode == CertVerifyMode::HOST &&
+            SSL_set1_host(ssl_, reference_host.c_str()) != 1) {
+            SSL_free(ssl_);
+            ssl_ = nullptr;
+            bio_ = nullptr;
+            return ERR_CERT_VERIFY;
+        }
     }
 
     // Create socket BIO
@@ -87,7 +139,7 @@ int32_t TlsTransport::init_ssl() {
 
 int32_t TlsTransport::verify_certificate() {
     if (config_.verify_mode == CertVerifyMode::NONE) {
-        return 0;  // No verification requested
+        return 0;  // Explicitly insecure mode requested by the caller.
     }
 
     X509* cert = SSL_get_peer_certificate(ssl_);
@@ -95,23 +147,11 @@ int32_t TlsTransport::verify_certificate() {
         return ERR_CERT_VERIFY;
     }
 
-    // Verify certificate chain
+    // The OpenSSL verify result includes the complete configured chain. When
+    // HOST mode is active, SSL_set1_host() also contributes the identity check.
     long verify_result = SSL_get_verify_result(ssl_);
-    if (verify_result != X509_V_OK) {
-        X509_free(cert);
-        return ERR_CERT_VERIFY;
-    }
-
-    // Verify hostname if requested
-    if (config_.verify_mode == CertVerifyMode::HOST) {
-        if (!verify_hostname(host_.c_str())) {
-            X509_free(cert);
-            return ERR_CERT_VERIFY;
-        }
-    }
-
     X509_free(cert);
-    return 0;
+    return verify_result == X509_V_OK ? 0 : ERR_CERT_VERIFY;
 }
 
 bool TlsTransport::verify_hostname(const char* hostname) {
@@ -177,6 +217,27 @@ bool TlsTransport::verify_hostname(const char* hostname) {
 
     X509_free(cert);
     return match;
+}
+
+int32_t TlsTransport::adopt_socket(int socket_fd, const char* host, uint16_t port) {
+    if (socket_fd < 0 || host == nullptr || port == 0) {
+        return ERR_INVALID_ARGUMENT;
+    }
+    if (connected_) {
+        shutdown();
+    }
+
+    socket_fd_ = socket_fd;
+    host_ = host;
+    port_ = port;
+    connected_ = true;
+    tls_established_ = false;
+    int32_t ret = init_ssl();
+    if (ret != 0) {
+        shutdown();
+        return ret;
+    }
+    return 0;
 }
 
 int32_t TlsTransport::connect(const char* host, uint16_t port) {
@@ -329,6 +390,24 @@ int32_t TlsTransport::shutdown_tls() {
     return 0;
 }
 
+void TlsTransport::set_timeouts(uint32_t connect_timeout_ms, uint32_t io_timeout_ms) {
+    if (connect_timeout_ms != 0) connect_timeout_ms_ = connect_timeout_ms;
+    if (io_timeout_ms != 0) io_timeout_ms_ = io_timeout_ms;
+    if (socket_fd_ < 0) return;
+
+#ifdef _WIN32
+    DWORD timeout = io_timeout_ms_;
+    ::setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    ::setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+#else
+    struct timeval timeout{};
+    timeout.tv_sec = static_cast<time_t>(io_timeout_ms_ / 1000);
+    timeout.tv_usec = static_cast<suseconds_t>((io_timeout_ms_ % 1000) * 1000);
+    ::setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    ::setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#endif
+}
+
 int32_t TlsTransport::shutdown() {
     if (!connected_ && socket_fd_ < 0) {
         return 0;  // Already closed
@@ -343,8 +422,21 @@ int32_t TlsTransport::shutdown() {
         ssl_ = nullptr;
     }
     // Note: bio_ is freed by SSL_free when attached
+    if (owned_ctx_) {
+        SSL_CTX_free(owned_ctx_);
+        owned_ctx_ = nullptr;
+    }
 
     connected_ = false;
+    if (socket_fd_ >= 0) {
+#ifdef _WIN32
+        ::shutdown(socket_fd_, SD_BOTH);
+        ::closesocket(static_cast<SOCKET>(socket_fd_));
+#else
+        ::shutdown(socket_fd_, SHUT_RDWR);
+        ::close(socket_fd_);
+#endif
+    }
     socket_fd_ = -1;
     host_.clear();
     port_ = 0;

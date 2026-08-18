@@ -67,7 +67,7 @@ public:
      * @param initial_host Host IP for NAT detection in data channels
      * @return 0 on success, negative error code on failure
      */
-    int32_t start(std::unique_ptr<Transport> transport, const std::string& initial_host);
+    int32_t start(std::unique_ptr<Transport> transport, const std::string& initial_host, bool expect_greeting = true);
     
     /**
      * Stop the control thread gracefully
@@ -173,7 +173,7 @@ inline ControlThread::~ControlThread() {
     stop();
 }
 
-inline int32_t ControlThread::start(std::unique_ptr<Transport> transport, const std::string& initial_host) {
+inline int32_t ControlThread::start(std::unique_ptr<Transport> transport, const std::string& initial_host, bool expect_greeting) {
     if (running_.load(std::memory_order_acquire)) {
         return -1;  // Already running
     }
@@ -187,22 +187,24 @@ inline int32_t ControlThread::start(std::unique_ptr<Transport> transport, const 
     stopped_.store(false, std::memory_order_release);
 
     // The TCP connection is established before the control thread starts.
-    // Read the server banner synchronously so the first queued command cannot
-    // consume the greeting as if it were the USER reply.
+    // Read the server banner unless AUTH TLS has already upgraded this same
+    // session; RFC 4217 requires reauthorization, not a second greeting.
     state_machine_.set_state(ProtocolState::TCP_CONNECTED);
     recv_buffer_.reserve(RECV_BUFFER_SIZE);
-    FtpReply greeting;
-    int32_t greeting_ret = read_response(greeting);
-    while (greeting_ret == 0 && greeting.code >= 100 && greeting.code < 200) {
-        greeting_ret = read_response(greeting);
-    }
-    if (greeting_ret != 0 || greeting.code < 200 || greeting.code >= 400) {
-        state_machine_.set_error();
-        if (transport_) {
-            transport_->shutdown();
-            transport_.reset();
+    if (expect_greeting) {
+        FtpReply greeting;
+        int32_t greeting_ret = read_response(greeting);
+        while (greeting_ret == 0 && greeting.code >= 100 && greeting.code < 200) {
+            greeting_ret = read_response(greeting);
         }
-        return greeting_ret != 0 ? greeting_ret : -501;  // FTP_ERR_PROTOCOL
+        if (greeting_ret != 0 || greeting.code < 200 || greeting.code >= 400) {
+            state_machine_.set_error();
+            if (transport_) {
+                transport_->shutdown();
+                transport_.reset();
+            }
+            return greeting_ret != 0 ? greeting_ret : -501;  // FTP_ERR_PROTOCOL
+        }
     }
     state_machine_.set_state(ProtocolState::GREETING_WAIT);
 
