@@ -430,8 +430,8 @@ inline int32_t ControlThread::execute_command(Command& cmd) {
         if (cmd.verb == "PASV" || cmd.verb == "EPSV" ||
             (cmd.verb == "MKD" && reply.code == 550) ||
             (cmd.verb == "SIZE" && reply.code == 550) ||
-            (cmd.verb == "STOR" && (reply.code == 421 || reply.code == 425 || reply.code == 426)) ||
-            (cmd.final_transfer_reply && (reply.code == 421 || reply.code == 426))) {
+            (cmd.verb == "STOR" && reply.code >= 400) ||
+            (cmd.final_transfer_reply && reply.code >= 400)) {
             state_machine_.set_state(ProtocolState::AUTHENTICATED);
             return map_ftp_code_to_error(reply.code);
         }

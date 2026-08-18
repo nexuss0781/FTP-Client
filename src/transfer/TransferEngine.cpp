@@ -20,14 +20,10 @@ TransferEngine::TransferEngine(protocol::ProtocolEngine& protocol_engine,
     , config_(config)
     , thread_pool_(ThreadPoolConfig{config.max_parallel})
     , buffer_pool_(BufferPoolConfig{config.buffer_size, config.max_parallel * 2})
-    , retry_policy_([&config]() {
-          resilience::RetryConfig retry;
-          retry.max_attempts = config.retry_attempts;
-          retry.base_delay_ms = config.retry_base_delay_ms;
-          retry.max_delay_ms = config.retry_max_delay_ms;
-          return retry;
-      }())
 {
+    thread_pool_.set_worker_callback([this](Task& task) {
+        execute_worker_task(task);
+    });
 }
 
 TransferEngine::~TransferEngine() {
@@ -92,8 +88,11 @@ int32_t TransferEngine::upload_directory(
         }
     }
     
-    /* Step 4: UPLOAD - M3 uses one serialized control/data transaction. */
+    /* Step 4: UPLOAD - use independent authenticated sessions when bounded
+       parallelism is requested and more than one file is available. */
     result_aggregator_.set_files_total(files.size());
+    const bool use_parallel_sessions = files.size() > 1 &&
+                                       thread_pool_.get_worker_count() > 1;
     for (auto& file : files) {
         Task task;
         task.type = TaskType::UPLOAD_FILE;
@@ -102,7 +101,17 @@ int32_t TransferEngine::upload_directory(
         task.file_size = file.size_bytes;
         task.progress_cb = reinterpret_cast<void*>(progress_cb);
         task.progress_user_data = progress_user_data;
-        execute_upload_task(task);
+        if (use_parallel_sessions) {
+            if (!thread_pool_.enqueue(std::move(task))) {
+                cancel_flag_.store(true, std::memory_order_release);
+                break;
+            }
+        } else {
+            execute_upload_task(task);
+        }
+    }
+    if (use_parallel_sessions) {
+        thread_pool_.wait_for_all();
     }
 
     /* Step 5: AGGREGATE RESULTS */
@@ -133,7 +142,8 @@ int32_t TransferEngine::upload_single_file(
     return result_aggregator_.get_worst_status();
 }
 
-void TransferEngine::execute_upload_task(Task& task) {
+void TransferEngine::execute_upload_task(Task& task, protocol::ProtocolEngine* session) {
+    protocol::ProtocolEngine& active_session = session != nullptr ? *session : protocol_engine_;
     ProgressState state;
     state.bytes_total = task.file_size;
 
@@ -142,13 +152,19 @@ void TransferEngine::execute_upload_task(Task& task) {
     entry.remote_relative_path = task.remote_path;
     entry.size_bytes = task.file_size;
 
+    resilience::RetryConfig retry_config;
+    retry_config.max_attempts = config_.retry_attempts;
+    retry_config.base_delay_ms = config_.retry_base_delay_ms;
+    retry_config.max_delay_ms = config_.retry_max_delay_ms;
+    resilience::RetryPolicy retry_policy(retry_config);
+
     uint64_t bytes_sent = 0;
     uint32_t attempts = 0;
-    task.result_status = retry_policy_.execute_with_retry([&]() {
+    task.result_status = retry_policy.execute_with_retry([&]() {
         uint64_t restart_offset = 0;
         if (config_.resume_enabled) {
             uint64_t remote_size = 0;
-            int32_t size_ret = protocol_engine_.get_remote_file_size(
+            int32_t size_ret = active_session.get_remote_file_size(
                 entry.remote_relative_path, &remote_size);
             if (size_ret == 0 && remote_size > 0 && remote_size < entry.size_bytes) {
                 restart_offset = remote_size;
@@ -156,12 +172,13 @@ void TransferEngine::execute_upload_task(Task& task) {
         }
 
         bytes_sent = 0;
-        return protocol_engine_.upload_file(
+        return active_session.upload_file(
             entry,
             &bytes_sent,
             [&](uint64_t current, uint64_t total) {
                 state.bytes_current = current;
                 state.bytes_total = total;
+                std::lock_guard<std::mutex> lock(progress_mutex_);
                 invoke_progress_callback(
                     task.local_path, task.remote_path, current, total,
                     reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
@@ -172,6 +189,7 @@ void TransferEngine::execute_upload_task(Task& task) {
 
     task.bytes_sent = bytes_sent;
     if (task.progress_cb) {
+        std::lock_guard<std::mutex> lock(progress_mutex_);
         auto cb = reinterpret_cast<ftp_progress_cb_t>(task.progress_cb);
         cb(task.local_path.c_str(), task.remote_path.c_str(),
            state.bytes_current, state.bytes_total, state.bytes_per_second,
@@ -184,6 +202,27 @@ void TransferEngine::execute_upload_task(Task& task) {
                                       task.result_status);
     if (task.bytes_sent > 0) {
         result_aggregator_.add_bytes_transferred(task.bytes_sent);
+    }
+}
+
+void TransferEngine::execute_worker_task(Task& task) {
+    try {
+        protocol::ProtocolEngine session;
+        session.get_config() = protocol_engine_.get_config();
+        int32_t connect_status = session.connect(protocol_engine_.get_credentials());
+        if (connect_status != 0) {
+            task.result_status = connect_status;
+            result_aggregator_.record_result(task.local_path, task.remote_path,
+                                              connect_status, 0, 1, connect_status);
+            return;
+        }
+        execute_upload_task(task, &session);
+        session.disconnect();
+    } catch (...) {
+        task.result_status = -501;  // FTP_ERR_PROTOCOL
+        result_aggregator_.record_result(task.local_path, task.remote_path,
+                                          task.result_status, 0, 1,
+                                          task.result_status);
     }
 }
 

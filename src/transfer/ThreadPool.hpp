@@ -19,7 +19,7 @@
 
 namespace ftpclient { namespace transfer {
 
-/* Forward declaration */
+    /* Forward declaration */
 struct Task;
 
 /**
@@ -65,6 +65,11 @@ public:
      * @return true on success, false if pool is stopped
      */
     bool enqueue(Task task);
+
+    using WorkerCallback = std::function<void(Task&)>;
+
+    /** Install the callback invoked by each worker for an enqueued task. */
+    void set_worker_callback(WorkerCallback callback);
     
     /**
      * Block until all tasks complete
@@ -92,6 +97,7 @@ private:
     std::condition_variable completion_cv_;
     std::atomic<bool> stop_{false};
     std::atomic<uint32_t> active_tasks_{0};
+    WorkerCallback worker_callback_;
     
     /**
      * Worker thread function
