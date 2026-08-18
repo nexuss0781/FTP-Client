@@ -453,3 +453,35 @@ def ftp_get_capabilities() -> int:
     ret = lib.ftp_get_capabilities(caps_ptr)
     _check_error(ret, "ftp_get_capabilities")
     return caps_ptr[0]
+
+
+def ftp_get_server_capabilities(handle: Any) -> dict[str, int]:
+    """Retrieve cached FEAT-derived capabilities for an authenticated session."""
+    caps = ffi.new("ftp_server_capabilities_t*")
+    caps.struct_size = ffi.sizeof("ftp_server_capabilities_t")
+    ret = lib.ftp_get_server_capabilities(handle, caps)
+    _check_error(ret, "ftp_get_server_capabilities")
+    return {
+        "feat_supported": int(caps.feat_supported),
+        "size_supported": int(caps.size_supported),
+        "mdtm_supported": int(caps.mdtm_supported),
+        "hash_supported": int(caps.hash_supported),
+        "hash_algorithms": int(caps.hash_algorithms),
+    }
+
+
+def ftp_get_remote_file_mdtm(handle: Any, remote_path: str) -> str:
+    """Retrieve a server MDTM timestamp for a remote file."""
+    output = ffi.new("char[]", 64)
+    ret = lib.ftp_get_remote_file_mdtm(handle, remote_path.encode("utf-8"), output, 64)
+    _check_error(ret, "ftp_get_remote_file_mdtm")
+    return ffi.string(output).decode("ascii")
+
+
+def ftp_get_remote_file_hash(handle: Any, remote_path: str, algorithm: str = "SHA-256") -> str:
+    """Retrieve a validated server-side hash for a remote file."""
+    output = ffi.new("char[]", 129)
+    ret = lib.ftp_get_remote_file_hash(
+        handle, remote_path.encode("utf-8"), algorithm.encode("ascii"), output, 129)
+    _check_error(ret, "ftp_get_remote_file_hash")
+    return ffi.string(output).decode("ascii")

@@ -183,6 +183,25 @@ class AsyncFTPClient:
             raise RuntimeError("Client not initialized")
         await self._run_in_executor(self._sync_client.clear_cancel)
 
+    async def server_capabilities(self):
+        """Retrieve FEAT-derived server capabilities asynchronously."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized")
+        return await self._run_in_executor(self._sync_client.server_capabilities)
+
+    async def remote_file_mdtm(self, remote_path: str) -> str:
+        """Retrieve a server MDTM timestamp asynchronously."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized")
+        return await self._run_in_executor(self._sync_client.remote_file_mdtm, remote_path)
+
+    async def remote_file_hash(self, remote_path: str, algorithm: str = "SHA-256") -> str:
+        """Retrieve a server-side hash asynchronously."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized")
+        return await self._run_in_executor(
+            self._sync_client.remote_file_hash, remote_path, algorithm)
+
     async def set_buffer_size(self, size_bytes: int) -> None:
         """Set internal buffer size (async)."""
         if self._sync_client is None:

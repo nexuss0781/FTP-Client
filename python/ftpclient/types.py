@@ -17,6 +17,24 @@ import re
 
 
 @dataclass(frozen=True)
+class ServerCapabilities:
+    """Capabilities advertised by the currently authenticated FTP session."""
+    feat_supported: bool
+    size_supported: bool
+    mdtm_supported: bool
+    hash_supported: bool
+    hash_algorithms: int
+
+    @property
+    def supports_sha256(self) -> bool:
+        return bool(self.hash_algorithms & 0x0004)
+
+    @property
+    def supports_sha512(self) -> bool:
+        return bool(self.hash_algorithms & 0x0008)
+
+
+@dataclass(frozen=True)
 class Credentials:
     """
     FTP connection credentials.
