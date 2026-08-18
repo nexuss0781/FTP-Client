@@ -450,7 +450,12 @@ FTP_API int32_t FTP_CALL ftp_download_file(
     ftp_result_t*       out_result
 );
 
-/* M8 download options. The struct_size prefix permits older callers to omit
+typedef struct {
+    const char* remote_path;
+    const char* sha256;
+} ftp_download_digest_t;
+
+/* M10 download options. The struct_size prefix permits older callers to omit
  * all extension fields safely. */
 typedef struct {
     uint32_t    struct_size;
@@ -458,6 +463,9 @@ typedef struct {
     const char* expected_sha256;    /* Nullable. Lowercase/uppercase hex digest */
     int32_t     resume_enabled;     /* 0 = truncate, 1 = continue .part when valid */
     int32_t     resume_metadata_enabled; /* 1 = require matching sidecar and digest */
+    const ftp_download_digest_t* file_digests; /* Nullable per-file directory manifest */
+    uint32_t    file_digest_count;
+    int32_t     resume_allow_unverified; /* 1 = explicit legacy unsafe resume */
 } ftp_download_options_t;
 
 FTP_API int32_t FTP_CALL ftp_download_file_ex(

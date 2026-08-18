@@ -83,6 +83,31 @@ def test_upload_options_dataclass():
     return True
 
 
+def test_download_digest_dataclass():
+    """Test M10 per-file download digest validation."""
+    print("Testing DownloadDigest dataclass...")
+    from ftpclient.types import DownloadDigest, DownloadOptions
+
+    digest = DownloadDigest(
+        "/deploy/hello.txt",
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    )
+    options = DownloadOptions(file_digests=(digest,))
+    assert options.file_digests == (digest,)
+    try:
+        DownloadDigest("", digest.sha256)
+        return False
+    except ValueError:
+        pass
+    try:
+        DownloadDigest("/deploy/bad.bin", "not-a-digest")
+        return False
+    except ValueError:
+        pass
+    print("[PASS] DownloadDigest dataclass works correctly")
+    return True
+
+
 def test_file_result_dataclass():
     """Test FileResult dataclass."""
     print("Testing FileResult dataclass...")
@@ -213,6 +238,7 @@ if __name__ == "__main__":
     try:
         results.append(test_credentials_dataclass())
         results.append(test_upload_options_dataclass())
+        results.append(test_download_digest_dataclass())
         results.append(test_file_result_dataclass())
         results.append(test_upload_result_dataclass())
         results.append(test_type_validation())

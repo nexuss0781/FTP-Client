@@ -73,7 +73,8 @@ struct TransferOptions {
     std::shared_ptr<std::atomic<bool>> cancel_token;
     uint32_t stall_timeout_ms = 0;
     bool resume_enabled = false;
-    bool resume_metadata_enabled = false;
+    bool resume_metadata_enabled = true;
+    bool resume_allow_unverified = false;
     std::string expected_sha256;
 };
 
@@ -784,14 +785,35 @@ inline bool write_resume_metadata(const std::filesystem::path& path,
                                   uint64_t remote_size,
                                   const std::string& expected_sha256,
                                   uint64_t confirmed_bytes) {
-    std::ofstream metadata(path, std::ios::trunc);
+    std::filesystem::path temporary = path;
+    temporary += ".tmp";
+    std::ofstream metadata(temporary, std::ios::trunc);
     if (!metadata) return false;
     metadata << "version=1\n"
              << "remote=" << remote_path << "\n"
              << "size=" << remote_size << "\n"
              << "expected=" << integrity::normalize_sha256(expected_sha256) << "\n"
              << "bytes=" << confirmed_bytes << "\n";
-    return static_cast<bool>(metadata);
+    metadata.flush();
+    metadata.close();
+    if (!metadata) {
+        std::error_code error;
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        error.clear();
+        std::filesystem::remove(path, error);
+        error.clear();
+        std::filesystem::rename(temporary, path, error);
+    }
+    if (error) {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    return true;
 }
 
 inline bool resume_metadata_matches(const std::filesystem::path& path,
