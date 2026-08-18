@@ -64,6 +64,11 @@ bool ThreadPool::enqueue(Task task) {
     return true;
 }
 
+void ThreadPool::set_worker_callback(WorkerCallback callback) {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    worker_callback_ = std::move(callback);
+}
+
 void ThreadPool::wait_for_all() {
     std::unique_lock<std::mutex> lock(queue_mutex_);
     
@@ -97,10 +102,21 @@ void ThreadPool::worker_loop() {
             active_tasks_.fetch_add(1, std::memory_order_acquire);
         }
         
-        /* Execute task outside of lock */
-        /* Note: Actual task execution is handled by TransferEngine's worker_callback */
-        /* This is a simplified version - real implementation calls external callback */
-        
+        /* Execute task outside of the queue lock. */
+        try {
+            WorkerCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
+                callback = worker_callback_;
+            }
+            if (callback) {
+                callback(task);
+            }
+        } catch (...) {
+            /* Keep the pool live and make an unhandled task failure visible. */
+            task.result_status = -501;  // FTP_ERR_PROTOCOL
+        }
+
         /* Mark task complete */
         if (task.completion_counter) {
             task.completion_counter->fetch_sub(1, std::memory_order_release);

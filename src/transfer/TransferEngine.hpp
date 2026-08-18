@@ -144,12 +144,13 @@ private:
     
     std::atomic<bool> cancel_flag_{false};
     std::mutex control_mutex_;  /* For control channel access */
-    resilience::RetryPolicy retry_policy_;
+    std::mutex progress_mutex_; /* Serialize public callbacks */
     
     /**
      * Worker function for upload tasks
      */
-    void execute_upload_task(Task& task);
+    void execute_upload_task(Task& task, protocol::ProtocolEngine* session = nullptr);
+    void execute_worker_task(Task& task);
     
     /**
      * Worker function for mkdir tasks

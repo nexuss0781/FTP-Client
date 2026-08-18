@@ -291,6 +291,16 @@ set_target_properties(m4_orchestration_integration_test PROPERTIES
 )
 add_test(NAME m4_orchestration_integration_test COMMAND m4_orchestration_integration_test)
 
+# M5 independent-session parallel transfer integration test
+add_executable(m5_parallel_sessions_integration_test tests/m5_parallel_sessions_integration_test.cpp)
+target_include_directories(m5_parallel_sessions_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(m5_parallel_sessions_integration_test PRIVATE ftpclient pthread)
+set_target_properties(m5_parallel_sessions_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME m5_parallel_sessions_integration_test COMMAND m5_parallel_sessions_integration_test)
+
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
 target_include_directories(header_purity_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
