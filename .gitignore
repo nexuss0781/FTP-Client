@@ -1,6 +1,7 @@
 ```
 # Build artifacts
 build/
+build-*/
 *.o
 *.obj
 *.so
@@ -15,6 +16,14 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Generated Python packaging
+*.egg-info/
+python/ftpclient/_lib/
 
 # Dependencies
 venv/

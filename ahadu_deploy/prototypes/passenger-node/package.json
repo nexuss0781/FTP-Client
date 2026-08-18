@@ -1,0 +1,13 @@
+{
+  "name": "ahadu-deploy-node-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal Node.js application for Ahadu Deploy target validation",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
