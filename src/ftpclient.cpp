@@ -303,11 +303,22 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
     }
 
     ftpclient::transfer::TransferConfig config;
+    const auto& client_config = impl->getConfig();
+    config.buffer_size = static_cast<uint32_t>(client_config.buffer_size);
+    config.retry_attempts = client_config.retry_max_attempts;
+    config.retry_base_delay_ms = client_config.retry_base_delay_ms;
+    config.retry_max_delay_ms = client_config.retry_max_delay_ms;
     if (options != nullptr) {
         config.max_parallel = options->max_parallel > 0
             ? static_cast<uint32_t>(options->max_parallel) : 0;
         config.resume_enabled = options->resume_enabled;
         config.create_remote_dirs = options->create_remote_dirs;
+        if (options->retry_attempts > 0) {
+            config.retry_attempts = static_cast<uint32_t>(options->retry_attempts);
+        }
+        if (options->retry_base_delay_ms > 0) {
+            config.retry_base_delay_ms = options->retry_base_delay_ms;
+        }
         if (options->struct_size >= sizeof(ftp_upload_options_t) &&
             options->remote_chmod != nullptr) {
             /* chmod is intentionally deferred until a later milestone. */
@@ -322,26 +333,13 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
         namespace fs = std::filesystem;
         fs::path local_fs(local_path);
         if (fs::is_regular_file(local_fs)) {
-            ftpclient::protocol::FileManifestEntry entry;
-            entry.local_absolute_path = local_fs.string();
-            entry.remote_relative_path = remote_path;
-            entry.size_bytes = fs::file_size(local_fs);
-
-            uint64_t bytes_sent = 0;
-            overall_status = impl->getProtocolEngine().upload_file(entry, &bytes_sent);
-            ftpclient::transfer::FileResult result;
-            result.local_path = local_fs.string();
-            result.remote_path = remote_path;
-            result.status = overall_status;
-            result.bytes_sent = bytes_sent;
-            result.attempt_count = 1;
-            result.final_error = overall_status;
-            file_results.push_back(std::move(result));
-            total_bytes = bytes_sent;
-            if (progress_cb != nullptr) {
-                progress_cb(local_path, remote_path, bytes_sent, entry.size_bytes,
-                            0.0, user_data);
-            }
+            ftpclient::transfer::TransferEngine engine(
+                impl->getProtocolEngine(), config);
+            overall_status = engine.upload_single_file(local_fs.string(), remote_path,
+                                                       progress_cb, user_data);
+            const auto& aggregator = engine.get_result_aggregator();
+            file_results = aggregator.get_results();
+            total_bytes = aggregator.get_bytes_transferred();
         } else if (fs::is_directory(local_fs)) {
             ftpclient::transfer::TransferEngine engine(
                 impl->getProtocolEngine(), config);
@@ -431,12 +429,12 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
     }
     
     /*
-     * M2 truthfulness rule: plain FTP and explicit FTPS control sessions are
-     * public because they are wired and tested through the exported execution
-     * path. Data-transfer features remain intentionally unadvertised.
+     * M4 truthfulness rule: control and passive data paths are public only
+     * because they are wired and tested through the exported execution path.
      */
-    /* M2 exposes the real plain and explicit-FTPS control sessions. */
-    *out_caps = FTP_CAP_CONTROL_FTP | FTP_CAP_TLS;
+    /* M4 exposes tested control, passive data, protected data, and REST resume. */
+    *out_caps = FTP_CAP_CONTROL_FTP | FTP_CAP_TLS |
+                FTP_CAP_RESUME | FTP_CAP_DATA_FTP | FTP_CAP_DATA_FTPS;
     return FTP_OK;
 }
 

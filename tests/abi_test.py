@@ -194,8 +194,11 @@ def test_version_capabilities(lib):
     caps = ctypes.c_uint64()
     ret = lib.ftp_get_capabilities(ctypes.byref(caps))
     test_assert("ftp_get_capabilities returns OK", ret == FTP_OK)
-    test_assert("M2 reports real plain control capability", (caps.value & 0x0020) != 0)
-    test_assert("M2 reports explicit FTPS capability", (caps.value & 0x0001) != 0)
+    test_assert("M4 reports real plain control capability", (caps.value & 0x0020) != 0)
+    test_assert("M4 reports explicit FTPS capability", (caps.value & 0x0001) != 0)
+    test_assert("M4 reports plain passive data capability", (caps.value & 0x0040) != 0)
+    test_assert("M4 reports protected passive data capability", (caps.value & 0x0080) != 0)
+    test_assert("M4 reports REST resume capability", (caps.value & 0x0010) != 0)
     
     # Test with NULL
     ret = lib.ftp_get_capabilities(None)
@@ -312,7 +315,7 @@ def test_connection(lib):
     creds.port = 21
     creds.username = b"testuser"
     creds.password = b"testpass"
-    creds.use_tls = 2  # Implicit FTPS is intentionally unavailable in M2
+    creds.use_tls = 2  # Implicit FTPS is intentionally unavailable in M4
     creds.verify_cert = 0
     creds.ca_bundle_path = None
     
@@ -324,9 +327,9 @@ def test_connection(lib):
     ret = lib.ftp_connect(handle, None)
     test_assert("ftp_connect with NULL creds fails", ret == FTP_ERR_INVALID_ARGUMENT)
     
-    # M2 keeps implicit FTPS deterministic until the port-990 factory is integrated.
+    # M4 keeps implicit FTPS deterministic until the port-990 factory is integrated.
     ret = lib.ftp_connect(handle, ctypes.byref(creds))
-    test_assert("ftp_connect reports implicit FTPS not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED)
+    test_assert("ftp_connect reports implicit FTPS not implemented in M4", ret == FTP_ERR_NOT_IMPLEMENTED)
     
     # The failed connect must not transition the handle to CONNECTED.
     ret = lib.ftp_ping(handle)
@@ -352,8 +355,8 @@ def test_connection(lib):
 
 
 def test_upload_dir_stub(lib):
-    """Test the M3 upload contract: validation plus authenticated-state checks."""
-    print("\n=== Testing Upload Directory (M3 Single-File Path) ===")
+    """Test the M4 upload contract: validation plus authenticated-state checks."""
+    print("\n=== Testing Upload Directory (M4 Orchestration Path) ===")
     
     # Setup signature - note: progress callback can be None (ctypes converts NULL automatically)
     lib.ftp_upload_dir.restype = ctypes.c_int32

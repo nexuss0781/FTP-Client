@@ -281,6 +281,16 @@ set_target_properties(data_transfer_integration_test PROPERTIES
 )
 add_test(NAME data_transfer_integration_test COMMAND data_transfer_integration_test)
 
+# M4 multi-file orchestration, retry, resume, and progress integration test
+add_executable(m4_orchestration_integration_test tests/m4_orchestration_integration_test.cpp)
+target_include_directories(m4_orchestration_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(m4_orchestration_integration_test PRIVATE ftpclient pthread)
+set_target_properties(m4_orchestration_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME m4_orchestration_integration_test COMMAND m4_orchestration_integration_test)
+
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
 target_include_directories(header_purity_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
