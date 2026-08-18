@@ -302,22 +302,24 @@ int main() {
                 server.file("deploy/b.bin") == bravo &&
                 server.file("deploy/c.bin") == charlie,
                 "M5 independent sessions preserve file isolation");
-    ok &= check(server.connections() == 4,
-                "M5 uses independent worker control sessions");
+    ok &= check(server.connections() == 3,
+                "M6 reuses one independent session per worker");
     ok &= check(ftp_result_free(&result) == FTP_OK, "M5 result frees");
     ok &= check(ftp_disconnect(client) == FTP_OK, "M5 base session disconnects");
     ok &= check(ftp_client_destroy(client) == FTP_OK, "M5 client destroys");
     std::filesystem::remove_all(root);
 
-    ParallelServer failure_server(3, "deploy/fail.bin");
+    ParallelServer failure_server(4, "deploy/fail.bin");
     ok &= check(failure_server.start(), "M5 failure-isolation server starts");
     std::filesystem::path failure_root = "/tmp/ftpclient_m5_failure";
     std::filesystem::remove_all(failure_root);
     std::filesystem::create_directories(failure_root);
     const std::string good_payload(60000, 'G');
     const std::string fail_payload(50000, 'F');
+    const std::string after_payload(40000, 'A');
     ok &= check(write_file(failure_root / "good.bin", good_payload) &&
-                write_file(failure_root / "fail.bin", fail_payload),
+                write_file(failure_root / "fail.bin", fail_payload) &&
+                write_file(failure_root / "after.bin", after_payload),
                 "M5 failure-isolation files created");
 
     ftp_client_t* failure_client = nullptr;
@@ -337,20 +339,25 @@ int main() {
     int32_t failure_ret = ftp_upload_dir(failure_client, failure_root.c_str(),
                                          "deploy", &failure_options,
                                          nullptr, nullptr, &failure_result);
-    ok &= check(failure_ret != FTP_OK && failure_result.files_total == 2 &&
-                failure_result.files_success == 1 && failure_result.files_failed == 1,
-                "M5 one worker failure is isolated in aggregate results");
+    ok &= check(failure_ret != FTP_OK && failure_result.files_total == 3 &&
+                failure_result.files_success == 2 && failure_result.files_failed == 1,
+                "M6 one worker failure is isolated in aggregate results");
+    uint64_t failed_files = 0;
+    if (failure_result.file_results != nullptr) {
+        for (uint64_t i = 0; i < failure_result.file_result_count; ++i) {
+            if (failure_result.file_results[i].status != 0) ++failed_files;
+        }
+    }
     ok &= check(failure_server.file("deploy/good.bin") == good_payload &&
-                failure_result.file_results != nullptr &&
-                failure_result.file_results[0].status == -502 &&
-                failure_result.file_results[1].status == 0,
-                "M5 sibling upload succeeds while rejected file is reported");
+                failure_server.file("deploy/after.bin") == after_payload &&
+                failed_files == 1,
+                "M6 failed worker reconnects and completes its next file");
     ok &= check(ftp_result_free(&failure_result) == FTP_OK,
-                "M5 failure result frees");
+                "M6 failure result frees");
     ok &= check(ftp_disconnect(failure_client) == FTP_OK,
-                "M5 failure-isolation disconnects");
+                "M6 failure-isolation disconnects");
     ok &= check(ftp_client_destroy(failure_client) == FTP_OK,
-                "M5 failure-isolation client destroys");
+                "M6 failure-isolation client destroys");
     std::filesystem::remove_all(failure_root);
     return ok ? 0 : 1;
 }
