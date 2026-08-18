@@ -18,6 +18,15 @@ struct RemoteListingEntry {
     std::string modify_fact;
 };
 
+inline bool is_safe_mlsd_name(const std::string& name) {
+    if (name.empty() || name == "." || name == ".." || name.front() == '/' ||
+        name.front() == '\\' || name.find('/') != std::string::npos ||
+        name.find('\\') != std::string::npos || name.find(':') != std::string::npos) {
+        return false;
+    }
+    return true;
+}
+
 inline bool parse_mlsd_entry(const std::string& line, RemoteListingEntry& out) {
     out = RemoteListingEntry();
     const size_t separator = line.find(' ');
@@ -68,8 +77,9 @@ inline bool parse_mlsd_entry(const std::string& line, RemoteListingEntry& out) {
         out.type != "cdir" && out.type != "pdir") {
         return false;
     }
-    if ((out.type == "file" || out.type == "dir") &&
-        (out.name == "." || out.name == "..")) {
+    if (out.type == "file" || out.type == "dir") {
+        if (!is_safe_mlsd_name(out.name)) return false;
+    } else if (out.name != "." && out.name != "..") {
         return false;
     }
     return true;

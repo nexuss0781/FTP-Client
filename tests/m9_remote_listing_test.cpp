@@ -28,6 +28,10 @@ int main() {
     RemoteListingEntry malformed;
     assert(!parse_mlsd_entry("type=file;size=bad; invalid.bin", malformed));
     assert(!parse_mlsd_entry("type=file;missing-separator", malformed));
+    assert(!parse_mlsd_entry("type=file;size=1; ../escape.bin", malformed));
+    assert(!parse_mlsd_entry("type=file;size=1; /absolute.bin", malformed));
+    assert(!parse_mlsd_entry("type=dir; name/with-separator", malformed));
+    assert(!parse_mlsd_entry("type=file;size=1; C:drive.bin", malformed));
 
     StateMachine machine;
     machine.set_state(ProtocolState::AUTHENTICATED);
