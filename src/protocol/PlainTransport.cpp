@@ -121,11 +121,17 @@ int32_t PlainTransport::read(void* buffer, uint32_t length) {
     if (result < 0) {
 #ifdef _WIN32
         int err = WSAGetLastError();
+        if (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) {
+            return ERR_TIMEOUT;
+        }
         if (err == WSAECONNRESET || err == WSAECONNABORTED) {
             connected_ = false;
             return ERR_NETWORK_RESET;
         }
 #else
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) {
+            return ERR_TIMEOUT;
+        }
         if (errno == ECONNRESET || errno == EPIPE) {
             connected_ = false;
             return ERR_NETWORK_RESET;

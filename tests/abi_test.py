@@ -78,6 +78,18 @@ class FtpUploadOptions(ctypes.Structure):
         ("resume_enabled", ctypes.c_int32),
         ("create_remote_dirs", ctypes.c_int32),
         ("remote_chmod", ctypes.c_char_p),
+        ("expected_sha256", ctypes.c_char_p),
+        ("stall_timeout_ms", ctypes.c_uint32),
+        ("resume_metadata_enabled", ctypes.c_int32),
+    ]
+
+
+class FtpDownloadOptions(ctypes.Structure):
+    """ftp_download_options_t structure."""
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("stall_timeout_ms", ctypes.c_uint32),
+        ("expected_sha256", ctypes.c_char_p),
     ]
 
 
@@ -132,6 +144,9 @@ FTP_ERR_NOT_IMPLEMENTED = -204
 FTP_ERR_AUTH_FAILED = -301
 FTP_ERR_CONNECT = -401
 FTP_ERR_TIMEOUT = -402
+FTP_ERR_CANCELLED = -604
+FTP_ERR_STALLED = -605
+FTP_ERR_INTEGRITY = -606
 
 ERROR_NAMES = {
     FTP_OK: "FTP_OK",
@@ -143,6 +158,9 @@ ERROR_NAMES = {
     FTP_ERR_AUTH_FAILED: "FTP_ERR_AUTH_FAILED",
     FTP_ERR_CONNECT: "FTP_ERR_CONNECT",
     FTP_ERR_TIMEOUT: "FTP_ERR_TIMEOUT",
+    FTP_ERR_CANCELLED: "FTP_ERR_CANCELLED",
+    FTP_ERR_STALLED: "FTP_ERR_STALLED",
+    FTP_ERR_INTEGRITY: "FTP_ERR_INTEGRITY",
 }
 
 
@@ -199,10 +217,25 @@ def test_version_capabilities(lib):
     test_assert("M4 reports plain passive data capability", (caps.value & 0x0040) != 0)
     test_assert("M4 reports protected passive data capability", (caps.value & 0x0080) != 0)
     test_assert("M4 reports REST resume capability", (caps.value & 0x0010) != 0)
+    test_assert("M8 reports SHA-256 integrity capability", (caps.value & 0x0100) != 0)
     
     # Test with NULL
     ret = lib.ftp_get_capabilities(None)
     test_assert("ftp_get_capabilities with NULL returns error", ret == FTP_ERR_INVALID_ARGUMENT)
+
+
+def test_m8_exports(lib):
+    """Validate M8 exported symbols and cancellation preconditions."""
+    print("\\n=== Testing M8 Exports ===")
+    for symbol in ("ftp_download_file_ex", "ftp_cancel", "ftp_clear_cancel"):
+        test_assert(f"{symbol} is exported", hasattr(lib, symbol))
+
+    lib.ftp_cancel.restype = ctypes.c_int32
+    lib.ftp_cancel.argtypes = [ctypes.c_void_p]
+    lib.ftp_clear_cancel.restype = ctypes.c_int32
+    lib.ftp_clear_cancel.argtypes = [ctypes.c_void_p]
+    test_assert("ftp_cancel NULL handle fails", lib.ftp_cancel(None) == FTP_ERR_INVALID_HANDLE)
+    test_assert("ftp_clear_cancel NULL handle fails", lib.ftp_clear_cancel(None) == FTP_ERR_INVALID_HANDLE)
 
 
 def test_handle_lifecycle(lib):
@@ -450,6 +483,7 @@ def main():
     
     # Run tests
     test_version_capabilities(lib)
+    test_m8_exports(lib)
     test_handle_lifecycle(lib)
     test_configuration(lib)
     test_connection(lib)

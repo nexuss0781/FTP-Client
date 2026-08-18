@@ -34,6 +34,15 @@ class UploadOptions:
     resume_enabled: bool
     create_remote_dirs: bool
     remote_chmod: Optional[str]
+    expected_sha256: Optional[str]
+    stall_timeout_ms: int
+    resume_metadata_enabled: bool
+
+
+@dataclass(frozen=True)
+class DownloadOptions:
+    expected_sha256: Optional[str]
+    stall_timeout_ms: int
 
 
 @dataclass(frozen=True)
@@ -44,6 +53,19 @@ class FileResult:
     bytes_sent: int
     attempt_count: int
     final_error: Optional[int]
+
+
+@dataclass(frozen=True)
+class DownloadResult:
+    status: int
+    files_total: int
+    files_success: int
+    files_failed: int
+    bytes_transferred: int
+    file_results: Tuple[FileResult, ...]
+
+    @property
+    def success(self) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -112,6 +134,17 @@ class FTPClient:
         options: Optional[UploadOptions] = ...,
         progress: Optional[ProgressCallback] = ...
     ) -> UploadResult: ...
+
+    def download_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        options: Optional[DownloadOptions] = ...,
+        progress: Optional[ProgressCallback] = ...
+    ) -> DownloadResult: ...
+
+    def cancel(self) -> None: ...
+    def clear_cancel(self) -> None: ...
     
     def set_credential_provider(self, provider: CredentialProviderCallback) -> None: ...
     def set_buffer_size(self, size_bytes: int) -> None: ...

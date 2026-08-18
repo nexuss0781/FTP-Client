@@ -68,7 +68,9 @@ ErrorCategory RetryPolicy::classify_error(int32_t error_code) {
     /* Invalid state/argument - not retryable */
     if (error_code == -201 ||  /* FTP_ERR_INVALID_HANDLE */
         error_code == -202 ||  /* FTP_ERR_INVALID_ARGUMENT */
-        error_code == -203) {  /* FTP_ERR_INVALID_STATE */
+        error_code == -203 ||  /* FTP_ERR_INVALID_STATE */
+        error_code == -604 ||  /* FTP_ERR_CANCELLED */
+        error_code == -606) {  /* FTP_ERR_INTEGRITY */
         return ErrorCategory::PERMANENT_LOCAL;
     }
     
