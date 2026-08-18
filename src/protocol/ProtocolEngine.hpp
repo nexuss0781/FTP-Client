@@ -231,11 +231,18 @@ inline int32_t ProtocolEngine::connect(const ConnectionCredentials& creds) {
     if (creds.host.empty() || creds.port == 0) {
         return -202;  // FTP_ERR_INVALID_ARGUMENT
     }
+    if (creds.use_tls != 0) {
+        return -204;  // FTP_ERR_NOT_IMPLEMENTED until TLS factory is integrated
+    }
     
     creds_ = creds;
     
     // Create transport
     control_transport_ = create_transport();
+    if (!control_transport_) {
+        return -401;  // FTP_ERR_CONNECT
+    }
+    control_transport_->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
     
     int32_t ret = control_transport_->connect(creds.host.c_str(), creds.port);
     if (ret != 0) {
@@ -262,20 +269,18 @@ inline int32_t ProtocolEngine::connect(const ConnectionCredentials& creds) {
 }
 
 inline int32_t ProtocolEngine::disconnect() {
-    if (!is_connected()) {
-        return 0;  // Already disconnected
-    }
-    
+    int32_t ret = 0;
     if (control_thread_) {
-        control_thread_->disconnect();
+        if (control_thread_->is_running()) {
+            ret = control_thread_->disconnect();
+        }
         control_thread_->stop();
         control_thread_.reset();
     }
-    
+
     control_thread_ = std::make_unique<ControlThread>();
     creds_ = ConnectionCredentials();
-    
-    return 0;
+    return ret;
 }
 
 inline int32_t ProtocolEngine::ping() {
@@ -350,12 +355,13 @@ inline int32_t ProtocolEngine::authenticate(const std::string& username, const s
         }
         
         int32_t ret = future.get();
-        if (ret == 0) {
-            return 0;  // Some servers accept anonymous with just USER
-        }
-        if (ret != -301) {  // Not FTP_ERR_AUTH_FAILED expecting PASS
+        if (ret != 0 && ret != -301) {
             return ret;
         }
+        if (control_thread_->is_authenticated()) {
+            return 0;  // Some servers accept anonymous with just USER
+        }
+        // USER/331 leaves the state AUTH_IN_PROGRESS, so continue with PASS.
     }
     
     // Send PASS command

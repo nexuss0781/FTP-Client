@@ -72,6 +72,7 @@ add_definitions(-DFTP_BUILDING_DLL)
 
 set(FTP_SOURCES
     src/ftpclient.cpp
+    src/protocol/PlainTransport.cpp
 )
 
 set(FTP_HEADERS
@@ -231,6 +232,16 @@ set_target_properties(abi_test PROPERTIES
     C_STANDARD_REQUIRED ON
 )
 add_test(NAME abi_test COMMAND abi_test)
+
+# M1 loopback control-session integration test
+add_executable(control_integration_test tests/control_integration_test.cpp)
+target_include_directories(control_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(control_integration_test PRIVATE ftpclient pthread)
+set_target_properties(control_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME control_integration_test COMMAND control_integration_test)
 
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)

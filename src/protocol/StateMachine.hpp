@@ -205,7 +205,11 @@ private:
     
     TransitionResult handle_greeting_wait(FtpCommand cmd, uint16_t reply_code) {
         if (cmd == FtpCommand::USER) {
-            if (reply_code >= 200 && reply_code < 400) {
+            if (reply_code == 230) {
+                state_ = ProtocolState::AUTHENTICATED;
+                return TransitionResult::SUCCESS;
+            }
+            if (reply_code == 331) {
                 state_ = ProtocolState::AUTH_IN_PROGRESS;
                 return TransitionResult::SUCCESS;
             }
