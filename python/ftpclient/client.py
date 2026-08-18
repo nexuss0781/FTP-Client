@@ -370,7 +370,8 @@ class FTPClient:
             remote_bytes,
             c_options,
             progress_cb,
-            ffi.NULL,  # user_data for progress callback
+            (ffi.cast("void*", ffi.cast("intptr_t", progress_cb_id))
+             if progress_cb_id is not None else ffi.NULL),
             result_ptr
         )
         
@@ -433,9 +434,22 @@ class FTPClient:
         c_options.struct_size = ffi.sizeof("ftp_download_options_t")
         c_options.stall_timeout_ms = options.stall_timeout_ms
         c_options.expected_sha256 = options.expected_sha256.encode("ascii") if options.expected_sha256 else ffi.NULL
+        c_options.resume_enabled = 1 if options.resume_enabled else 0
+        c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
+        progress_cb = ffi.NULL
+        progress_cb_id = None
+        if progress is not None:
+            progress_cb_id = _register_callback_handle(progress)
+            self._progress_callback_id = progress_cb_id
+            progress_cb = _progress_callback_trampoline
         result_ptr = ffi.new("ftp_result_t*")
-        ret = lib.ftp_download_file_ex(self._handle, local_bytes, remote_bytes,
-                                       c_options, ffi.NULL, ffi.NULL, result_ptr)
+        ret = lib.ftp_download_file_ex(
+            self._handle, local_bytes, remote_bytes, c_options, progress_cb,
+            (ffi.cast("void*", ffi.cast("intptr_t", progress_cb_id))
+             if progress_cb_id is not None else ffi.NULL), result_ptr)
+        if progress_cb_id is not None:
+            _unregister_callback_handle(progress_cb_id)
+            self._progress_callback_id = None
         file_results = []
         if result_ptr.file_results != ffi.NULL and result_ptr.file_result_count > 0:
             for i in range(result_ptr.file_result_count):
@@ -459,6 +473,62 @@ class FTPClient:
         lib.ftp_result_free(result_ptr)
         if ret != lib.FTP_OK and result.status == lib.FTP_OK:
             _check_error(ret, "download_file")
+        return result
+
+    def download_directory(
+        self,
+        local_path: str,
+        remote_path: str,
+        options: Optional[DownloadOptions] = None,
+        progress: Optional[Callable[[Path, str, int, int, float], None]] = None
+    ) -> DownloadResult:
+        """Recursively download a remote MLSD directory tree."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        if not self._connected:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
+        options = options or DownloadOptions()
+        c_options = ffi.new("ftp_download_options_t*")
+        c_options.struct_size = ffi.sizeof("ftp_download_options_t")
+        c_options.stall_timeout_ms = options.stall_timeout_ms
+        c_options.expected_sha256 = options.expected_sha256.encode("ascii") if options.expected_sha256 else ffi.NULL
+        c_options.resume_enabled = 1 if options.resume_enabled else 0
+        c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
+        progress_cb = ffi.NULL
+        progress_cb_id = None
+        if progress is not None:
+            progress_cb_id = _register_callback_handle(progress)
+            self._progress_callback_id = progress_cb_id
+            progress_cb = _progress_callback_trampoline
+        result_ptr = ffi.new("ftp_result_t*")
+        ret = lib.ftp_download_dir(
+            self._handle, os.fsencode(local_path), remote_path.encode("utf-8"),
+            c_options, progress_cb,
+            (ffi.cast("void*", ffi.cast("intptr_t", progress_cb_id))
+             if progress_cb_id is not None else ffi.NULL), result_ptr)
+        if progress_cb_id is not None:
+            _unregister_callback_handle(progress_cb_id)
+            self._progress_callback_id = None
+        file_results = []
+        if result_ptr.file_results != ffi.NULL and result_ptr.file_result_count > 0:
+            for i in range(result_ptr.file_result_count):
+                fr = result_ptr.file_results[i]
+                file_results.append(FileResult(
+                    local_path=Path(ffi.string(fr.local_path).decode("utf-8")) if fr.local_path != ffi.NULL else Path(),
+                    remote_path=ffi.string(fr.remote_path).decode("utf-8") if fr.remote_path != ffi.NULL else "",
+                    status=int(fr.status), bytes_sent=int(fr.bytes_sent),
+                    attempt_count=int(fr.attempt_count),
+                    final_error=int(fr.final_error) if fr.final_error != 0 else None,
+                ))
+        result = DownloadResult(
+            status=int(result_ptr.status), files_total=int(result_ptr.files_total),
+            files_success=int(result_ptr.files_success), files_failed=int(result_ptr.files_failed),
+            bytes_transferred=int(result_ptr.bytes_transferred),
+            file_results=tuple(file_results),
+        )
+        lib.ftp_result_free(result_ptr)
+        if ret != lib.FTP_OK and result.status == lib.FTP_OK:
+            _check_error(ret, "download_directory")
         return result
 
     def cancel(self) -> None:

@@ -4,7 +4,7 @@
 
 M9 will add a typed MLSD listing path using RFC 3659-style facts. The parser will accept `type=file`, `type=dir`, `size`, and `modify` facts, preserve names containing spaces, reject malformed entries, and ignore unsupported facts. SIZE remains the portable file-length probe. MDTM will be optional metadata enrichment; a server that rejects MDTM must not make a valid listing unusable.
 
-Remote hash negotiation is capability-driven rather than assumed. The client may probe FEAT for HASH support and may request a server hash only when the advertised algorithm is supported by the implementation. If the server lacks HASH, local SHA-256 verification remains authoritative and the client will not claim remote verification.
+Server-side HASH negotiation is intentionally deferred. M9 does not claim remote hash verification because the current implementation has no portable FEAT/HASH capability probe. Local SHA-256 verification remains authoritative, and the public result never claims a remote digest was checked.
 
 ## Durable RETR resume
 

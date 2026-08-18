@@ -786,11 +786,11 @@ inline bool write_resume_metadata(const std::filesystem::path& path,
                                   uint64_t confirmed_bytes) {
     std::ofstream metadata(path, std::ios::trunc);
     if (!metadata) return false;
-    metadata << "version=1\\n"
-             << "remote=" << remote_path << "\\n"
-             << "size=" << remote_size << "\\n"
-             << "expected=" << integrity::normalize_sha256(expected_sha256) << "\\n"
-             << "bytes=" << confirmed_bytes << "\\n";
+    metadata << "version=1\n"
+             << "remote=" << remote_path << "\n"
+             << "size=" << remote_size << "\n"
+             << "expected=" << integrity::normalize_sha256(expected_sha256) << "\n"
+             << "bytes=" << confirmed_bytes << "\n";
     return static_cast<bool>(metadata);
 }
 

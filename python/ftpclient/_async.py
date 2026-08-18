@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 
 from ftpclient.client import FTPClient
-from ftpclient.types import Credentials, UploadOptions, UploadResult
+from ftpclient.types import Credentials, UploadOptions, DownloadOptions, UploadResult, DownloadResult
 
 
 class AsyncFTPClient:
@@ -135,6 +135,54 @@ class AsyncFTPClient:
             progress
         )
     
+    async def download_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        options: Optional[DownloadOptions] = None,
+        progress: Optional[Callable[[Path, str, int, int, float], None]] = None
+    ) -> DownloadResult:
+        """Download one remote file without blocking the event loop."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized. Call connect() first.")
+        return await self._run_in_executor(
+            self._sync_client.download_file,
+            local_path,
+            remote_path,
+            options,
+            progress
+        )
+
+    async def download_directory(
+        self,
+        local_path: str,
+        remote_path: str,
+        options: Optional[DownloadOptions] = None,
+        progress: Optional[Callable[[Path, str, int, int, float], None]] = None
+    ) -> DownloadResult:
+        """Recursively download an MLSD directory without blocking the event loop."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized. Call connect() first.")
+        return await self._run_in_executor(
+            self._sync_client.download_directory,
+            local_path,
+            remote_path,
+            options,
+            progress
+        )
+
+    async def cancel(self) -> None:
+        """Request cancellation of the active synchronous transfer."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized")
+        await self._run_in_executor(self._sync_client.cancel)
+
+    async def clear_cancel(self) -> None:
+        """Clear the cooperative cancellation flag."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized")
+        await self._run_in_executor(self._sync_client.clear_cancel)
+
     async def set_buffer_size(self, size_bytes: int) -> None:
         """Set internal buffer size (async)."""
         if self._sync_client is None:
