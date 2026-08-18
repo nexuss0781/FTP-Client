@@ -4,7 +4,7 @@
 **Milestone:** M13  
 **Branch:** `feature/ftps-m13-verification-retry-policies`  
 **Author:** Manus AI  
-**Status:** Implementation and validation complete; ready for final documentation commit and merge
+**Status:** Complete and merged into `main`
 
 ## Executive status
 
@@ -51,7 +51,7 @@ The feature branch contains M12 main history and the following M13 checkpoints:
 | `cbf9a62` | Preserve non-retryable stalled transfer behavior. |
 | `b993f5e` | Expose M13 policy controls to C ABI and Python. |
 
-The final documentation commit is pending. After it is pushed, the branch will be merged into `main` with a non-fast-forward merge and the final status record will be corrected to reference the merge commit.
+The final documentation commit is `d84dfea` (`Document M13 verification and retry policies`). M13 was merged into `main` with merge commit `f040860` (`Merge M13 verification and retry policies into main`) and pushed to `origin/main`.
 
 ## Intentional boundaries
 
