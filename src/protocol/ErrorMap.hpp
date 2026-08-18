@@ -64,6 +64,11 @@ inline bool is_ftp_intermediate(uint16_t ftp_code) {
     return ftp_code >= 300 && ftp_code < 400;
 }
 
+/** FTP preliminary replies (125/150) authorize opening the data socket. */
+inline bool is_ftp_preliminary(uint16_t ftp_code) {
+    return ftp_code >= 100 && ftp_code < 200;
+}
+
 }} // namespace ftpclient::protocol
 
 #endif /* FTPCLIENT_ERROR_MAP_HPP */

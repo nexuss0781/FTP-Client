@@ -85,9 +85,8 @@ int32_t TransferEngine::upload_directory(
         }
     }
     
-    /* Step 4: CONCURRENT UPLOAD - Enqueue file tasks */
-    std::atomic<uint32_t> pending_tasks{0};
-    
+    /* Step 4: UPLOAD - M3 uses one serialized control/data transaction. */
+    result_aggregator_.set_files_total(files.size());
     for (auto& file : files) {
         Task task;
         task.type = TaskType::UPLOAD_FILE;
@@ -96,106 +95,39 @@ int32_t TransferEngine::upload_directory(
         task.file_size = file.size_bytes;
         task.progress_cb = reinterpret_cast<void*>(progress_cb);
         task.progress_user_data = progress_user_data;
-        task.completion_counter = new std::atomic<uint32_t>(1);
-        
-        pending_tasks.fetch_add(1, std::memory_order_release);
-        
-        /* Store completion counter for wait */
-        task.completion_counter = &pending_tasks;
-        
-        /* We need to capture the task by moving it into the pool */
-        /* For simplicity, we execute directly in this phase */
-        /* Full thread pool integration requires callback mechanism */
-        
-        /* For Phase 4, we'll use a simplified synchronous execution model */
-        /* that still demonstrates the algorithm structure */
-        
-        /* Decrement pending after "task" completes */
-        pending_tasks.fetch_sub(1, std::memory_order_release);
+        execute_upload_task(task);
     }
-    
-    /* Wait for all tasks to complete */
-    while (pending_tasks.load(std::memory_order_acquire) > 0) {
-        std::this_thread::yield();
-    }
-    
-    /* Step 5: AGGREGATE RESULTS - Already done during execution */
+
+    /* Step 5: AGGREGATE RESULTS */
     return result_aggregator_.get_worst_status();
 }
 
 void TransferEngine::execute_upload_task(Task& task) {
     ProgressState state;
     state.bytes_total = task.file_size;
-    
-    /* Open local file */
-    std::ifstream file(task.local_path, std::ios::binary);
-    if (!file) {
-        task.result_status = -601;  /* FTP_ERR_LOCAL_IO */
-        result_aggregator_.record_result(task.local_path, task.remote_path,
-                                          task.result_status, 0);
-        return;
-    }
-    
-    /* Check for resume support */
-    uint64_t start_offset = 0;
-    if (config_.resume_enabled) {
-        /* Send SIZE command to check remote file size */
-        /* This requires control channel access - simplified for Phase 4 */
-        /* Full implementation would query server here */
-    }
-    
-    if (start_offset > 0) {
-        /* Seek to resume point */
-        file.seekg(static_cast<std::streampos>(start_offset));
-        state.bytes_current = start_offset;
-    }
-    
-    /* Acquire buffer from pool */
-    char* buf = buffer_pool_.acquire();
-    if (!buf) {
-        task.result_status = -101;  /* FTP_ERR_NOMEM */
-        result_aggregator_.record_result(task.local_path, task.remote_path,
-                                          task.result_status, state.bytes_current);
-        return;
-    }
-    
-    /* Upload loop - simplified for Phase 4 */
-    /* Full implementation would open data channel via ProtocolEngine */
-    task.result_status = 0;  /* FTP_OK - placeholder */
-    task.bytes_sent = task.file_size;
-    
-    /* Simulate transfer for structure verification */
-    while (file.read(buf, static_cast<std::streamsize>(buffer_pool_.get_buffer_size())) 
-           || file.gcount() > 0) {
-        std::streamsize bytes_read = file.gcount();
-        state.bytes_current += static_cast<uint64_t>(bytes_read);
-        
-        /* Invoke progress callback with throttling */
-        invoke_progress_callback(
-            task.local_path,
-            task.remote_path,
-            state.bytes_current,
-            state.bytes_total,
-            reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
-            task.progress_user_data,
-            state
-        );
-    }
-    
-    /* Release buffer */
-    buffer_pool_.release(buf);
-    
-    /* Final progress callback */
+
+    protocol::FileManifestEntry entry;
+    entry.local_absolute_path = task.local_path;
+    entry.remote_relative_path = task.remote_path;
+    entry.size_bytes = task.file_size;
+
+    uint64_t bytes_sent = 0;
+    task.result_status = protocol_engine_.upload_file(entry, &bytes_sent);
+    task.bytes_sent = bytes_sent;
+    state.bytes_current = bytes_sent;
+
     if (task.progress_cb) {
         auto cb = reinterpret_cast<ftp_progress_cb_t>(task.progress_cb);
         cb(task.local_path.c_str(), task.remote_path.c_str(),
-           state.bytes_total, state.bytes_total, 0.0, task.progress_user_data);
+           state.bytes_current, state.bytes_total, 0.0, task.progress_user_data);
     }
-    
-    /* Record result */
+
     result_aggregator_.record_result(task.local_path, task.remote_path,
-                                      task.result_status, task.bytes_sent);
-    result_aggregator_.add_bytes_transferred(task.bytes_sent);
+                                      task.result_status, task.bytes_sent,
+                                      1, task.result_status);
+    if (task.bytes_sent > 0) {
+        result_aggregator_.add_bytes_transferred(task.bytes_sent);
+    }
 }
 
 int32_t TransferEngine::execute_mkdir_task(const std::string& remote_dir) {
