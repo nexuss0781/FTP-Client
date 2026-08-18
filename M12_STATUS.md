@@ -4,7 +4,7 @@
 **Milestone:** M12  
 **Branch:** `feature/ftps-m12-provenance-parallel`  
 **Author:** Manus AI  
-**Status:** Implementation and validation complete; ready for final commit and merge
+**Status:** Complete and merged into `main`
 
 ## Executive status
 
@@ -41,7 +41,7 @@ The default behavior remains compatible with M11 and earlier milestones: no serv
 
 ## Commit lineage
 
-The feature branch currently contains M11’s merged main history and the M12 core checkpoint `058504e` (`Add M12 verification provenance and download scheduler`). The final documentation, integration-test registration, ABI assertions, and milestone records are pending the final commit. The branch remains separate from `main` until all final records are committed and pushed.
+The feature branch contains M11’s merged main history, the M12 core checkpoint `058504e` (`Add M12 verification provenance and download scheduler`), and the final completion commit `f76fe6c` (`Complete M12 verified parallel downloads`). M12 was merged into `main` with merge commit `1d93ede` (`Merge M12 verified parallel downloads into main`) and pushed to `origin/main`.
 
 ## Known intentional boundaries
 
