@@ -204,7 +204,10 @@ public:
      * Get mutable configuration
      */
     ProtocolEngineConfig& get_config() { return config_; }
-    
+
+    /** Get a read-only copy source for worker-session construction. */
+    const ConnectionCredentials& get_credentials() const { return creds_; }
+
     /**
      * Set command timeout
      */
