@@ -185,37 +185,53 @@ inline int32_t ControlThread::start(std::unique_ptr<Transport> transport, const 
     transport_ = std::move(transport);
     host_ = initial_host;
     stopped_.store(false, std::memory_order_release);
-    running_.store(true, std::memory_order_release);
-    
-    // Pre-allocate receive buffer
+
+    // The TCP connection is established before the control thread starts.
+    // Read the server banner synchronously so the first queued command cannot
+    // consume the greeting as if it were the USER reply.
+    state_machine_.set_state(ProtocolState::TCP_CONNECTED);
     recv_buffer_.reserve(RECV_BUFFER_SIZE);
-    
+    FtpReply greeting;
+    int32_t greeting_ret = read_response(greeting);
+    while (greeting_ret == 0 && greeting.code >= 100 && greeting.code < 200) {
+        greeting_ret = read_response(greeting);
+    }
+    if (greeting_ret != 0 || greeting.code < 200 || greeting.code >= 400) {
+        state_machine_.set_error();
+        if (transport_) {
+            transport_->shutdown();
+            transport_.reset();
+        }
+        return greeting_ret != 0 ? greeting_ret : -501;  // FTP_ERR_PROTOCOL
+    }
+    state_machine_.set_state(ProtocolState::GREETING_WAIT);
+
     try {
         thread_ = std::thread(&ControlThread::run_loop, this);
+        running_.store(true, std::memory_order_release);
         return 0;
     } catch (...) {
-        running_.store(false, std::memory_order_release);
+        if (transport_) {
+            transport_->shutdown();
+            transport_.reset();
+        }
+        state_machine_.set_error();
         return -102;  // FTP_ERR_SYSTEM
     }
 }
 
 inline void ControlThread::stop() {
-    if (!running_.load(std::memory_order_acquire)) {
-        return;
-    }
-    
-    // Signal stop
+    // Signal stop when the loop is still active. A fatal protocol reply may
+    // already have set running_ false, but its std::thread remains joinable.
     running_.store(false, std::memory_order_release);
     queue_cv_.notify_one();
-    
-    // Wait for thread to finish
+
     if (thread_.joinable()) {
         thread_.join();
     }
-    
+
     stopped_.store(true, std::memory_order_release);
-    
-    // Close transport
+
     if (transport_) {
         transport_->shutdown();
         transport_.reset();
@@ -240,6 +256,10 @@ inline std::future<int32_t> ControlThread::enqueue_command(const std::string& ve
 }
 
 inline int32_t ControlThread::disconnect() {
+    if (!running_.load(std::memory_order_acquire)) {
+        return 0;
+    }
+
     auto future = enqueue_command("QUIT", "");
     
     if (future.valid()) {
@@ -308,6 +328,7 @@ inline void ControlThread::run_loop() {
             break;
         }
     }
+    running_.store(false, std::memory_order_release);
 }
 
 inline int32_t ControlThread::execute_command(Command& cmd) {
@@ -329,18 +350,19 @@ inline int32_t ControlThread::execute_command(Command& cmd) {
         return ret;
     }
     
-    // Update state machine
+    // Preserve the published server-error taxonomy before state validation.
+    if (!is_ftp_success(reply.code) && !is_ftp_intermediate(reply.code)) {
+        state_machine_.set_error();
+        return map_ftp_code_to_error(reply.code);
+    }
+
+    // Update state machine for successful and intermediate replies.
     auto transition = state_machine_.transition(ftp_cmd, reply.code);
-    
     if (transition == TransitionResult::INVALID_STATE) {
         return -203;  // FTP_ERR_INVALID_STATE
     }
-    
-    // Map response code to error
-    if (!is_ftp_success(reply.code)) {
-        return map_ftp_code_to_error(reply.code);
-    }
-    
+
+    // A transition-approved 3xx response is valid for USER/PASS flows.
     return 0;
 }
 

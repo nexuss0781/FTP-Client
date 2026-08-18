@@ -52,6 +52,16 @@ public:
     virtual int32_t write(const void* buffer, uint32_t length) = 0;
 
     /**
+     * Configure blocking I/O deadlines. Concrete transports may apply the
+     * values to their socket or TLS layer; the default is intentionally a no-op
+     * for compatibility with existing transport implementations.
+     */
+    virtual void set_timeouts(uint32_t connect_timeout_ms, uint32_t io_timeout_ms) {
+        (void)connect_timeout_ms;
+        (void)io_timeout_ms;
+    }
+
+    /**
      * Graceful shutdown and close
      * @return 0 on success, negative on error
      */
