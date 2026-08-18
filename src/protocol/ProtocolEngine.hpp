@@ -23,6 +23,8 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <filesystem>
+#include <system_error>
 
 namespace ftpclient { namespace protocol {
 
@@ -177,7 +179,9 @@ public:
      * @param entry File manifest entry
      * @return 0 on success, negative error code on failure
      */
-    int32_t download_file(const FileManifestEntry& entry);
+    int32_t download_file(const FileManifestEntry& entry,
+                          uint64_t* out_bytes_received = nullptr,
+                          const ProgressCallback& progress = ProgressCallback());
     
     /**
      * Create remote directory (Phase 4)
@@ -186,6 +190,12 @@ public:
      * @return 0 on success, negative error code on failure
      */
     int32_t create_remote_dir(const std::string& remote_path);
+    int32_t change_directory(const std::string& remote_path);
+    int32_t parent_directory();
+    int32_t delete_remote_file(const std::string& remote_path);
+    int32_t remove_remote_dir(const std::string& remote_path);
+    int32_t rename_remote_path(const std::string& from_path,
+                               const std::string& to_path);
 
     /** Query a remote file size; returns -502 when the file is absent. */
     int32_t get_remote_file_size(const std::string& remote_path, uint64_t* out_size);
@@ -667,10 +677,255 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
     return 0;
 }
 
-inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry) {
-    // Phase 4 stub
-    (void)entry;
-    return -203;  // FTP_ERR_INVALID_STATE - not implemented yet
+inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
+                                              uint64_t* out_bytes_received,
+                                              const ProgressCallback& progress) {
+    if (out_bytes_received != nullptr) {
+        *out_bytes_received = 0;
+    }
+    if (!is_authenticated() || !control_thread_ ||
+        entry.local_absolute_path.empty() || entry.remote_relative_path.empty()) {
+        return -203;  // FTP_ERR_INVALID_STATE
+    }
+
+    namespace fs = std::filesystem;
+    fs::path final_path(entry.local_absolute_path);
+    std::error_code fs_error;
+    if (!final_path.parent_path().empty()) {
+        fs::create_directories(final_path.parent_path(), fs_error);
+        if (fs_error) {
+            return -601;  // FTP_ERR_LOCAL_IO
+        }
+    }
+    fs::path temp_path = final_path;
+    temp_path += ".ftpclient.part";
+    fs::remove(temp_path, fs_error);
+    std::ofstream output(temp_path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        return -601;  // FTP_ERR_LOCAL_IO
+    }
+
+    auto type_future = control_thread_->enqueue_command("TYPE", "I");
+    if (!type_future.valid()) {
+        output.close();
+        fs::remove(temp_path, fs_error);
+        return -401;
+    }
+    int32_t ret = type_future.get();
+    if (ret != 0) {
+        output.close();
+        fs::remove(temp_path, fs_error);
+        return ret;
+    }
+
+    auto passive_future = control_thread_->enqueue_command_with_reply("EPSV", "");
+    if (!passive_future.valid()) {
+        output.close();
+        fs::remove(temp_path, fs_error);
+        return -401;
+    }
+    CommandReply passive_reply = passive_future.get();
+    PassiveModeResult passive;
+    if (passive_reply.status == 0 && passive_reply.code == 229) {
+        passive = DataChannel::parse_epsv(passive_reply.message.empty()
+            ? std::string("229") : std::string("229 ") + passive_reply.message);
+        passive.ip = control_thread_->get_host();
+    }
+    if (passive.port == 0) {
+        control_thread_->reset_after_data_error();
+        auto pasv_future = control_thread_->enqueue_command_with_reply("PASV", "");
+        if (!pasv_future.valid()) {
+            output.close();
+            fs::remove(temp_path, fs_error);
+            return -401;
+        }
+        passive_reply = pasv_future.get();
+        if (passive_reply.status != 0 || passive_reply.code != 227) {
+            output.close();
+            fs::remove(temp_path, fs_error);
+            return passive_reply.status != 0 ? passive_reply.status : -503;
+        }
+        passive = DataChannel::parse_pasv(
+            passive_reply.message.empty()
+                ? std::string("227") : std::string("227 ") + passive_reply.message,
+            control_thread_->get_host());
+    }
+    if (passive.ip.empty() || passive.port == 0) {
+        output.close();
+        fs::remove(temp_path, fs_error);
+        control_thread_->reset_after_data_error();
+        return -501;
+    }
+
+    auto data_plain = std::make_unique<PlainTransport>();
+    data_plain->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+    ret = data_plain->connect(passive.ip.c_str(), passive.port);
+    if (ret != 0) {
+        output.close();
+        fs::remove(temp_path, fs_error);
+        control_thread_->reset_after_data_error();
+        return ret;
+    }
+
+    auto retr_future = control_thread_->enqueue_command_with_reply("RETR", entry.remote_relative_path);
+    if (!retr_future.valid()) {
+        data_plain->shutdown();
+        output.close();
+        fs::remove(temp_path, fs_error);
+        control_thread_->reset_after_data_error();
+        return -401;
+    }
+    CommandReply retr_reply = retr_future.get();
+    if (retr_reply.status != 0 || (retr_reply.code != 125 && retr_reply.code != 150)) {
+        data_plain->shutdown();
+        output.close();
+        fs::remove(temp_path, fs_error);
+        control_thread_->reset_after_data_error();
+        return retr_reply.status != 0 ? retr_reply.status : -503;
+    }
+
+    std::unique_ptr<Transport> data_transport;
+    if (creds_.use_tls == 1) {
+        security::TlsConfig tls_config;
+        tls_config.server_name = creds_.host;
+        tls_config.ca_bundle_path = creds_.ca_bundle_path;
+        tls_config.verify_mode = static_cast<security::CertVerifyMode>(creds_.verify_cert);
+        void* shared_ctx = security::get_shared_ssl_ctx();
+        if (shared_ctx == nullptr) {
+            data_plain->shutdown();
+            output.close();
+            fs::remove(temp_path, fs_error);
+            control_thread_->reset_after_data_error();
+            return -102;
+        }
+        auto data_tls = std::make_unique<security::TlsTransport>(
+            static_cast<SSL_CTX*>(shared_ctx), tls_config);
+        int socket_fd = data_plain->release_socket();
+        ret = data_tls->adopt_socket(socket_fd, creds_.host.c_str(), passive.port);
+        if (ret == 0) {
+            data_tls->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+            ret = data_tls->handshake();
+        }
+        if (ret != 0) {
+            data_tls->shutdown();
+            output.close();
+            fs::remove(temp_path, fs_error);
+            control_thread_->reset_after_data_error();
+            return ret;
+        }
+        data_transport = std::move(data_tls);
+    } else {
+        data_transport = std::move(data_plain);
+    }
+
+    uint64_t bytes_received = 0;
+    char buffer[256 * 1024];
+    for (;;) {
+        int32_t count = data_transport->read(buffer, sizeof(buffer));
+        if (count < 0) {
+            data_transport->shutdown();
+            output.close();
+            fs::remove(temp_path, fs_error);
+            control_thread_->reset_after_data_error();
+            return count;
+        }
+        if (count == 0) {
+            break;
+        }
+        output.write(buffer, count);
+        if (!output) {
+            data_transport->shutdown();
+            output.close();
+            fs::remove(temp_path, fs_error);
+            control_thread_->reset_after_data_error();
+            return -601;
+        }
+        bytes_received += static_cast<uint64_t>(count);
+        if (progress) {
+            progress(bytes_received, entry.size_bytes);
+        }
+    }
+    data_transport->shutdown();
+    output.flush();
+    output.close();
+    if (!output) {
+        fs::remove(temp_path, fs_error);
+        control_thread_->reset_after_data_error();
+        return -601;
+    }
+
+    auto final_future = control_thread_->enqueue_final_transfer_reply();
+    if (!final_future.valid()) {
+        fs::remove(temp_path, fs_error);
+        return -401;
+    }
+    CommandReply final_reply = final_future.get();
+    if (final_reply.status != 0 || (final_reply.code != 226 && final_reply.code != 250)) {
+        fs::remove(temp_path, fs_error);
+        control_thread_->reset_after_data_error();
+        return final_reply.status != 0 ? final_reply.status : -503;
+    }
+
+    fs::remove(final_path, fs_error);
+    fs_error.clear();
+    fs::rename(temp_path, final_path, fs_error);
+    if (fs_error) {
+        fs::remove(temp_path, fs_error);
+        control_thread_->reset_after_data_error();
+        return -601;
+    }
+    if (progress) {
+        progress(bytes_received, entry.size_bytes);
+    }
+    if (out_bytes_received != nullptr) {
+        *out_bytes_received = bytes_received;
+    }
+    return 0;
+}
+
+inline int32_t ProtocolEngine::change_directory(const std::string& remote_path) {
+    if (!is_authenticated() || remote_path.empty() || !control_thread_) {
+        return -203;
+    }
+    auto future = control_thread_->enqueue_command("CWD", remote_path);
+    return future.valid() ? future.get() : -401;
+}
+
+inline int32_t ProtocolEngine::parent_directory() {
+    if (!is_authenticated() || !control_thread_) {
+        return -203;
+    }
+    auto future = control_thread_->enqueue_command("CDUP", "");
+    return future.valid() ? future.get() : -401;
+}
+
+inline int32_t ProtocolEngine::delete_remote_file(const std::string& remote_path) {
+    if (!is_authenticated() || remote_path.empty() || !control_thread_) {
+        return -203;
+    }
+    auto future = control_thread_->enqueue_command("DELE", remote_path);
+    return future.valid() ? future.get() : -401;
+}
+
+inline int32_t ProtocolEngine::remove_remote_dir(const std::string& remote_path) {
+    if (!is_authenticated() || remote_path.empty() || !control_thread_) {
+        return -203;
+    }
+    auto future = control_thread_->enqueue_command("RMD", remote_path);
+    return future.valid() ? future.get() : -401;
+}
+
+inline int32_t ProtocolEngine::rename_remote_path(const std::string& from_path,
+                                                   const std::string& to_path) {
+    if (!is_authenticated() || from_path.empty() || to_path.empty() || !control_thread_) {
+        return -203;
+    }
+    auto from_future = control_thread_->enqueue_command("RNFR", from_path);
+    if (!from_future.valid()) return -401;
+    int32_t ret = from_future.get();
+    if (ret != 0) return ret;
+    auto to_future = control_thread_->enqueue_command("RNTO", to_path);
+    return to_future.valid() ? to_future.get() : -401;
 }
 
 inline int32_t ProtocolEngine::create_remote_dir(const std::string& remote_path) {

@@ -397,6 +397,131 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
     }
 }
 
+FTP_API int32_t FTP_CALL ftp_download_file(
+    ftp_client_t* handle,
+    const char* local_path,
+    const char* remote_path,
+    ftp_progress_cb_t progress_cb,
+    void* user_data,
+    ftp_result_t* out_result
+) {
+    if (handle == nullptr) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) {
+        return FTP_ERR_INVALID_HANDLE;
+    }
+    if (local_path == nullptr || local_path[0] == '\0' ||
+        remote_path == nullptr || remote_path[0] == '\0') {
+        return FTP_ERR_INVALID_ARGUMENT;
+    }
+    if (out_result != nullptr) {
+        std::memset(out_result, 0, sizeof(*out_result));
+    }
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) {
+        return FTP_ERR_INVALID_STATE;
+    }
+
+    try {
+        ftpclient::protocol::FileManifestEntry entry;
+        entry.local_absolute_path = local_path;
+        entry.remote_relative_path = remote_path;
+        entry.is_directory = false;
+
+        ftpclient::protocol::ProtocolEngine::ProgressCallback progress;
+        if (progress_cb != nullptr) {
+            progress = [progress_cb, local = std::string(local_path),
+                        remote = std::string(remote_path), user_data]
+                       (uint64_t current, uint64_t total) {
+                progress_cb(local.c_str(), remote.c_str(), current, total,
+                            0.0, user_data);
+            };
+        }
+
+        uint64_t bytes_received = 0;
+        int32_t status = impl->getProtocolEngine().download_file(
+            entry, &bytes_received, progress);
+        if (out_result != nullptr) {
+            out_result->status = status;
+            out_result->files_total = 1;
+            out_result->files_success = status == FTP_OK ? 1 : 0;
+            out_result->files_failed = status == FTP_OK ? 0 : 1;
+            out_result->bytes_transferred = bytes_received;
+            out_result->file_result_count = 1;
+            out_result->file_results = new ftp_file_result_t[1]();
+            char* local_copy = new char[std::strlen(local_path) + 1];
+            char* remote_copy = new char[std::strlen(remote_path) + 1];
+            std::strcpy(local_copy, local_path);
+            std::strcpy(remote_copy, remote_path);
+            out_result->file_results[0].local_path = local_copy;
+            out_result->file_results[0].remote_path = remote_copy;
+            out_result->file_results[0].status = status;
+            out_result->file_results[0].bytes_sent = bytes_received;
+            out_result->file_results[0].attempt_count = 1;
+            out_result->file_results[0].final_error = status;
+        }
+        return status;
+    } catch (const std::bad_alloc&) {
+        if (out_result != nullptr) {
+            ftp_result_free(out_result);
+        }
+        return FTP_ERR_NOMEM;
+    } catch (...) {
+        if (out_result != nullptr) {
+            ftp_result_free(out_result);
+        }
+        return FTP_ERR_SYSTEM;
+    }
+}
+
+FTP_API int32_t FTP_CALL ftp_change_directory(ftp_client_t* handle, const char* remote_path) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (remote_path == nullptr || remote_path[0] == '\0') return FTP_ERR_INVALID_ARGUMENT;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    return impl->getProtocolEngine().change_directory(remote_path);
+}
+
+FTP_API int32_t FTP_CALL ftp_parent_directory(ftp_client_t* handle) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    return impl->getProtocolEngine().parent_directory();
+}
+
+FTP_API int32_t FTP_CALL ftp_delete_remote_file(ftp_client_t* handle, const char* remote_path) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (remote_path == nullptr || remote_path[0] == '\0') return FTP_ERR_INVALID_ARGUMENT;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    return impl->getProtocolEngine().delete_remote_file(remote_path);
+}
+
+FTP_API int32_t FTP_CALL ftp_remove_remote_directory(ftp_client_t* handle, const char* remote_path) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (remote_path == nullptr || remote_path[0] == '\0') return FTP_ERR_INVALID_ARGUMENT;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    return impl->getProtocolEngine().remove_remote_dir(remote_path);
+}
+
+FTP_API int32_t FTP_CALL ftp_rename_remote(ftp_client_t* handle,
+                                           const char* from_path,
+                                           const char* to_path) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (from_path == nullptr || from_path[0] == '\0' ||
+        to_path == nullptr || to_path[0] == '\0') return FTP_ERR_INVALID_ARGUMENT;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    return impl->getProtocolEngine().rename_remote_path(from_path, to_path);
+}
+
 FTP_API int32_t FTP_CALL ftp_result_free(ftp_result_t* result) {
     if (result == nullptr) {
         return FTP_ERR_INVALID_ARGUMENT;

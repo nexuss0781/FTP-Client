@@ -301,6 +301,25 @@ set_target_properties(m5_parallel_sessions_integration_test PROPERTIES
 )
 add_test(NAME m5_parallel_sessions_integration_test COMMAND m5_parallel_sessions_integration_test)
 
+# M7 RETR/download and remote data-channel integration test
+add_executable(download_integration_test tests/download_integration_test.cpp)
+target_include_directories(download_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(download_integration_test PRIVATE
+    FTPS_TEST_CERT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ftps_server.crt"
+    FTPS_TEST_KEY_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ftps_server.key"
+)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(download_integration_test PRIVATE ftpclient pthread ssl crypto)
+else()
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(download_integration_test PRIVATE ftpclient OpenSSL::SSL OpenSSL::Crypto)
+endif()
+set_target_properties(download_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME download_integration_test COMMAND download_integration_test)
+
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
 target_include_directories(header_purity_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
