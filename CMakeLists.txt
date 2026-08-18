@@ -375,6 +375,17 @@ set_target_properties(m12_download_verification_integration_test PROPERTIES
 )
 add_test(NAME m12_download_verification_integration_test COMMAND m12_download_verification_integration_test)
 
+# M13 verification and retry policy unit test
+add_executable(m13_policy_test tests/m13_policy_test.cpp)
+target_include_directories(m13_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_sources(m13_policy_test PRIVATE src/resilience/RetryPolicy.cpp)
+target_link_libraries(m13_policy_test PRIVATE pthread)
+set_target_properties(m13_policy_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME m13_policy_test COMMAND m13_policy_test)
+
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
 target_include_directories(header_purity_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

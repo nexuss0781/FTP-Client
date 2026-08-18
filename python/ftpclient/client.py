@@ -367,6 +367,11 @@ class FTPClient:
         c_options.expected_sha256 = options.expected_sha256.encode('ascii') if options.expected_sha256 else ffi.NULL
         c_options.stall_timeout_ms = options.stall_timeout_ms
         c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
+        c_options.retry_max_delay_ms = options.retry_max_delay_ms
+        c_options.retry_max_elapsed_ms = options.retry_max_elapsed_ms
+        c_options.retry_categories = options.retry_categories
+        c_options.retry_jitter_factor = options.retry_jitter_factor
+        c_options.retry_all_errors = 1 if options.retry_all_errors else 0
         
         # Set up progress callback if provided
         progress_cb = ffi.NULL
@@ -460,6 +465,15 @@ class FTPClient:
         c_options.resume_allow_unverified = 1 if options.resume_allow_unverified else 0
         c_options.verify_remote_hash = 1 if options.verify_remote_hash else 0
         c_options.max_parallel = options.max_parallel
+        c_options.verification_policy = options.verification_policy
+        c_options.verification_algorithm = options.verification_algorithm.encode("ascii")
+        c_options.retry_attempts = options.retry_attempts
+        c_options.retry_base_delay_ms = options.retry_base_delay_ms
+        c_options.retry_max_delay_ms = options.retry_max_delay_ms
+        c_options.retry_max_elapsed_ms = options.retry_max_elapsed_ms
+        c_options.retry_categories = options.retry_categories
+        c_options.retry_jitter_factor = options.retry_jitter_factor
+        c_options.retry_all_errors = 1 if options.retry_all_errors else 0
         progress_cb = ffi.NULL
         progress_cb_id = None
         if progress is not None:
@@ -522,6 +536,15 @@ class FTPClient:
         c_options.resume_allow_unverified = 1 if options.resume_allow_unverified else 0
         c_options.verify_remote_hash = 1 if options.verify_remote_hash else 0
         c_options.max_parallel = options.max_parallel
+        c_options.verification_policy = options.verification_policy
+        c_options.verification_algorithm = options.verification_algorithm.encode("ascii")
+        c_options.retry_attempts = options.retry_attempts
+        c_options.retry_base_delay_ms = options.retry_base_delay_ms
+        c_options.retry_max_delay_ms = options.retry_max_delay_ms
+        c_options.retry_max_elapsed_ms = options.retry_max_elapsed_ms
+        c_options.retry_categories = options.retry_categories
+        c_options.retry_jitter_factor = options.retry_jitter_factor
+        c_options.retry_all_errors = 1 if options.retry_all_errors else 0
         digest_array = ffi.NULL
         digest_strings = []
         if options.file_digests:
