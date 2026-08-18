@@ -96,12 +96,28 @@ class UploadOptions:
 
 
 @dataclass(frozen=True)
+class DownloadDigest:
+    """Expected SHA-256 digest for one remote path in a directory download."""
+    remote_path: str
+    sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.remote_path:
+            raise ValueError("remote_path cannot be empty")
+        digest = self.sha256.replace(":", "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("sha256 must be a 64-character hexadecimal digest")
+
+
+@dataclass(frozen=True)
 class DownloadOptions:
     """Integrity, stall, and durable-resume controls for one remote-file download."""
     expected_sha256: Optional[str] = None
     stall_timeout_ms: int = 0
     resume_enabled: bool = False
-    resume_metadata_enabled: bool = False
+    resume_metadata_enabled: bool = True
+    file_digests: Tuple[DownloadDigest, ...] = ()
+    resume_allow_unverified: bool = False
 
     def __post_init__(self) -> None:
         if self.stall_timeout_ms < 0:

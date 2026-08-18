@@ -102,7 +102,12 @@ private:
             } else if (line == "TYPE I\r\n") {
                 send_all(control_fd_, "200 Binary mode\r\n");
             } else if (line == "SIZE /deploy/hello.txt\r\n") {
-                send_all(control_fd_, "213 5\r\n");
+                ++size_requests_;
+                if (size_requests_ == 1) {
+                    send_all(control_fd_, "502 SIZE unsupported\r\n");
+                } else {
+                    send_all(control_fd_, "213 5\r\n");
+                }
             } else if (line.rfind("REST ", 0) == 0) {
                 restart_offset_ = static_cast<size_t>(std::stoul(
                     line.substr(5, line.size() - 7)));
@@ -165,6 +170,7 @@ private:
     int listen_fd_ = -1;
     int control_fd_ = -1;
     size_t restart_offset_ = 0;
+    size_t size_requests_ = 0;
     uint16_t port_ = 0;
     std::thread worker_;
 };
@@ -187,10 +193,16 @@ int main() {
     const fs::path root = "/tmp/ftpclient_m9_directory";
     std::error_code error;
     fs::remove_all(root, error);
+    ftp_download_digest_t digests[] = {
+        {"/deploy/hello.txt", "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"},
+        {"/deploy/child/nested.bin", "233562de1a0288b139c4fa40b7d189f806e906eeb048517aeb67f34ac0e2faf1"},
+    };
     ftp_download_options_t options{};
     options.struct_size = sizeof(options);
     options.resume_enabled = 0;
     options.resume_metadata_enabled = 0;
+    options.file_digests = digests;
+    options.file_digest_count = 2;
     ftp_result_t result{};
     const int32_t status = ftp_download_dir(client, root.c_str(), "/deploy",
                                             &options, nullptr, nullptr, &result);
@@ -212,19 +224,68 @@ int main() {
     assert(std::string(result.file_results[1].remote_path) == "/deploy/hello.txt");
     assert(ftp_result_free(&result) == FTP_OK);
 
+    const fs::path outside_file = "/tmp/ftpclient_m10_outside.txt";
+    {
+        std::ofstream outside(outside_file, std::ios::trunc);
+        outside << "sentinel";
+    }
+    fs::remove(root / "hello.txt", error);
+    fs::create_symlink(outside_file, root / "hello.txt", error);
+    assert(!error);
+    ftp_result_t symlink_result{};
+    assert(ftp_download_dir(client, root.c_str(), "/deploy", &options,
+                            nullptr, nullptr, &symlink_result) == FTP_ERR_INVALID_ARGUMENT);
+    assert(symlink_result.status == FTP_ERR_INVALID_ARGUMENT);
+    assert(ftp_result_free(&symlink_result) == FTP_OK);
+    std::ifstream outside_after(outside_file, std::ios::binary);
+    std::string outside_content((std::istreambuf_iterator<char>(outside_after)), {});
+    assert(outside_content == "sentinel");
+    fs::remove(root / "hello.txt", error);
+    fs::remove(outside_file, error);
+
+    ftp_download_options_t ambiguous_options{};
+    ambiguous_options.struct_size = sizeof(ambiguous_options);
+    ambiguous_options.expected_sha256 = digests[0].sha256;
+    ftp_result_t ambiguous_result{};
+    assert(ftp_download_dir(client, root.c_str(), "/deploy", &ambiguous_options,
+                            nullptr, nullptr, &ambiguous_result) == FTP_ERR_INVALID_ARGUMENT);
+
+    const fs::path fallback_root = "/tmp/ftpclient_m10_size_fallback";
+    fs::remove_all(fallback_root, error);
+    fs::create_directories(fallback_root, error);
+    const fs::path fallback_file = fallback_root / "hello.txt";
+    ftp_download_options_t fallback_options{};
+    fallback_options.struct_size = sizeof(fallback_options);
+    fallback_options.resume_enabled = 1;
+    ftp_result_t fallback_result{};
+    assert(ftp_download_file_ex(client, fallback_file.c_str(), "/deploy/hello.txt",
+                                &fallback_options, nullptr, nullptr, &fallback_result) == FTP_OK);
+    std::ifstream fallback_stream(fallback_file, std::ios::binary);
+    std::string fallback_content((std::istreambuf_iterator<char>(fallback_stream)), {});
+    assert(fallback_content == "hello");
+    assert(ftp_result_free(&fallback_result) == FTP_OK);
+
     const fs::path resume_root = "/tmp/ftpclient_m9_resume";
     fs::remove_all(resume_root, error);
     fs::create_directories(resume_root, error);
     const fs::path resume_final = resume_root / "hello.txt";
     const fs::path resume_part = resume_final.string() + ".ftpclient.part";
     const fs::path resume_meta = resume_part.string() + ".meta";
+    const fs::path resume_meta_tmp = resume_meta.string() + ".tmp";
     {
         std::ofstream partial(resume_part, std::ios::binary);
         partial << "he";
+        std::ofstream metadata(resume_meta, std::ios::trunc);
+        metadata << "version=1\n"
+                 << "remote=/deploy/hello.txt\n"
+                 << "size=5\n"
+                 << "expected=\n"
+                 << "bytes=2\n";
     }
     ftp_download_options_t resume_options{};
     resume_options.struct_size = sizeof(resume_options);
     resume_options.resume_enabled = 1;
+    resume_options.resume_metadata_enabled = 1;
     ftp_result_t resume_result{};
     assert(ftp_download_file_ex(client, resume_final.c_str(), "/deploy/hello.txt",
                                 &resume_options, nullptr, nullptr, &resume_result) == FTP_OK);
@@ -233,10 +294,12 @@ int main() {
     assert(resumed_content == "hello");
     assert(!fs::exists(resume_part));
     assert(!fs::exists(resume_meta));
+    assert(!fs::exists(resume_meta_tmp));
     assert(ftp_result_free(&resume_result) == FTP_OK);
     assert(ftp_disconnect(client) == FTP_OK);
     assert(ftp_client_destroy(client) == FTP_OK);
     fs::remove_all(root, error);
+    fs::remove_all(fallback_root, error);
     fs::remove_all(resume_root, error);
     std::cout << "M9 directory download and RETR resume integration passed" << std::endl;
     return 0;

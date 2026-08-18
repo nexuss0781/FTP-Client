@@ -40,11 +40,19 @@ class UploadOptions:
 
 
 @dataclass(frozen=True)
+class DownloadDigest:
+    remote_path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class DownloadOptions:
     expected_sha256: Optional[str]
     stall_timeout_ms: int
     resume_enabled: bool
     resume_metadata_enabled: bool
+    file_digests: Tuple[DownloadDigest, ...]
+    resume_allow_unverified: bool
 
 
 @dataclass(frozen=True)
