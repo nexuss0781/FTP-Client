@@ -20,6 +20,13 @@ TransferEngine::TransferEngine(protocol::ProtocolEngine& protocol_engine,
     , config_(config)
     , thread_pool_(ThreadPoolConfig{config.max_parallel})
     , buffer_pool_(BufferPoolConfig{config.buffer_size, config.max_parallel * 2})
+    , retry_policy_([&config]() {
+          resilience::RetryConfig retry;
+          retry.max_attempts = config.retry_attempts;
+          retry.base_delay_ms = config.retry_base_delay_ms;
+          retry.max_delay_ms = config.retry_max_delay_ms;
+          return retry;
+      }())
 {
 }
 
@@ -102,6 +109,30 @@ int32_t TransferEngine::upload_directory(
     return result_aggregator_.get_worst_status();
 }
 
+int32_t TransferEngine::upload_single_file(
+    const std::string& local_path,
+    const std::string& remote_path,
+    ftp_progress_cb_t progress_cb,
+    void* progress_user_data
+) {
+    namespace fs = std::filesystem;
+    if (local_path.empty() || remote_path.empty() || !fs::is_regular_file(local_path)) {
+        return -202;
+    }
+
+    result_aggregator_.clear();
+    result_aggregator_.set_files_total(1);
+    Task task;
+    task.type = TaskType::UPLOAD_FILE;
+    task.local_path = local_path;
+    task.remote_path = remote_path;
+    task.file_size = fs::file_size(local_path);
+    task.progress_cb = reinterpret_cast<void*>(progress_cb);
+    task.progress_user_data = progress_user_data;
+    execute_upload_task(task);
+    return result_aggregator_.get_worst_status();
+}
+
 void TransferEngine::execute_upload_task(Task& task) {
     ProgressState state;
     state.bytes_total = task.file_size;
@@ -112,19 +143,45 @@ void TransferEngine::execute_upload_task(Task& task) {
     entry.size_bytes = task.file_size;
 
     uint64_t bytes_sent = 0;
-    task.result_status = protocol_engine_.upload_file(entry, &bytes_sent);
-    task.bytes_sent = bytes_sent;
-    state.bytes_current = bytes_sent;
+    uint32_t attempts = 0;
+    task.result_status = retry_policy_.execute_with_retry([&]() {
+        uint64_t restart_offset = 0;
+        if (config_.resume_enabled) {
+            uint64_t remote_size = 0;
+            int32_t size_ret = protocol_engine_.get_remote_file_size(
+                entry.remote_relative_path, &remote_size);
+            if (size_ret == 0 && remote_size > 0 && remote_size < entry.size_bytes) {
+                restart_offset = remote_size;
+            }
+        }
 
+        bytes_sent = 0;
+        return protocol_engine_.upload_file(
+            entry,
+            &bytes_sent,
+            [&](uint64_t current, uint64_t total) {
+                state.bytes_current = current;
+                state.bytes_total = total;
+                invoke_progress_callback(
+                    task.local_path, task.remote_path, current, total,
+                    reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
+                    task.progress_user_data, state);
+            },
+            restart_offset);
+    }, &attempts);
+
+    task.bytes_sent = bytes_sent;
     if (task.progress_cb) {
         auto cb = reinterpret_cast<ftp_progress_cb_t>(task.progress_cb);
         cb(task.local_path.c_str(), task.remote_path.c_str(),
-           state.bytes_current, state.bytes_total, 0.0, task.progress_user_data);
+           state.bytes_current, state.bytes_total, state.bytes_per_second,
+           task.progress_user_data);
     }
 
     result_aggregator_.record_result(task.local_path, task.remote_path,
                                       task.result_status, task.bytes_sent,
-                                      1, task.result_status);
+                                      attempts == 0 ? 1 : attempts,
+                                      task.result_status);
     if (task.bytes_sent > 0) {
         result_aggregator_.add_bytes_transferred(task.bytes_sent);
     }

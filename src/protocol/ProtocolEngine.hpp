@@ -22,6 +22,7 @@
 #include <string>
 #include <cstring>
 #include <fstream>
+#include <functional>
 
 namespace ftpclient { namespace protocol {
 
@@ -163,7 +164,12 @@ public:
      * @param entry File manifest entry
      * @return 0 on success, negative error code on failure
      */
-    int32_t upload_file(const FileManifestEntry& entry, uint64_t* out_bytes_sent = nullptr);
+    using ProgressCallback = std::function<void(uint64_t bytes_current, uint64_t bytes_total)>;
+
+    int32_t upload_file(const FileManifestEntry& entry,
+                        uint64_t* out_bytes_sent = nullptr,
+                        const ProgressCallback& progress = ProgressCallback(),
+                        uint64_t restart_offset = 0);
     
     /**
      * Download a single file (Phase 4)
@@ -180,6 +186,9 @@ public:
      * @return 0 on success, negative error code on failure
      */
     int32_t create_remote_dir(const std::string& remote_path);
+
+    /** Query a remote file size; returns -502 when the file is absent. */
+    int32_t get_remote_file_size(const std::string& remote_path, uint64_t* out_size);
     
     /* ========================================================================
      * Configuration
@@ -463,7 +472,10 @@ inline void ProtocolEngine::set_tls_mode(int32_t use_tls) {
     use_tls_ = (use_tls != 0);
 }
 
-inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry, uint64_t* out_bytes_sent) {
+inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
+                                            uint64_t* out_bytes_sent,
+                                            const ProgressCallback& progress,
+                                            uint64_t restart_offset) {
     if (out_bytes_sent != nullptr) {
         *out_bytes_sent = 0;
     }
@@ -486,6 +498,18 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry, uint6
     // EPSV is preferred because it avoids server-supplied address data. If a
     // server rejects it, retain the authenticated session and fall back to
     // classic IPv4 PASV.
+    if (restart_offset > 0) {
+        auto rest_future = control_thread_->enqueue_command(
+            "REST", std::to_string(restart_offset));
+        if (!rest_future.valid()) {
+            return -401;
+        }
+        ret = rest_future.get();
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
     auto passive_future = control_thread_->enqueue_command_with_reply("EPSV", "");
     if (!passive_future.valid()) {
         return -401;
@@ -584,8 +608,17 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry, uint6
         return -601;  // FTP_ERR_LOCAL_IO
     }
 
+    if (restart_offset > 0) {
+        file.seekg(static_cast<std::streamoff>(restart_offset), std::ios::beg);
+        if (!file) {
+            data_transport->shutdown();
+            control_thread_->reset_after_data_error();
+            return -601;
+        }
+    }
+
     char buffer[256 * 1024];
-    uint64_t bytes_sent = 0;
+    uint64_t bytes_sent = restart_offset;
     while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
         std::streamsize bytes = file.gcount();
         size_t offset = 0;
@@ -594,11 +627,18 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry, uint6
                 buffer + offset, static_cast<uint32_t>(bytes) - static_cast<uint32_t>(offset));
             if (written <= 0) {
                 data_transport->shutdown();
+                auto failed_final_future = control_thread_->enqueue_final_transfer_reply();
+                if (failed_final_future.valid()) {
+                    (void)failed_final_future.get();
+                }
                 control_thread_->reset_after_data_error();
                 return written < 0 ? written : -403;
             }
             offset += static_cast<size_t>(written);
             bytes_sent += static_cast<uint64_t>(written);
+            if (progress) {
+                progress(bytes_sent, entry.size_bytes);
+            }
         }
     }
     data_transport->shutdown();
@@ -611,9 +651,13 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry, uint6
     }
     CommandReply final_reply = final_future.get();
     if (final_reply.status != 0 || (final_reply.code != 226 && final_reply.code != 250)) {
+        control_thread_->reset_after_data_error();
         return final_reply.status != 0 ? final_reply.status : -503;
     }
 
+    if (progress) {
+        progress(entry.size_bytes, entry.size_bytes);
+    }
     if (out_bytes_sent != nullptr) {
         *out_bytes_sent = bytes_sent;
     }
@@ -627,9 +671,40 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry) {
 }
 
 inline int32_t ProtocolEngine::create_remote_dir(const std::string& remote_path) {
-    // Phase 4 stub
-    (void)remote_path;
-    return -203;  // FTP_ERR_INVALID_STATE - not implemented yet
+    if (!is_authenticated() || remote_path.empty() || !control_thread_) {
+        return -203;  // FTP_ERR_INVALID_STATE
+    }
+    auto future = control_thread_->enqueue_command("MKD", remote_path);
+    if (!future.valid()) {
+        return -401;  // FTP_ERR_CONNECT
+    }
+    return future.get();
+}
+
+inline int32_t ProtocolEngine::get_remote_file_size(const std::string& remote_path, uint64_t* out_size) {
+    if (!is_authenticated() || remote_path.empty() || out_size == nullptr || !control_thread_) {
+        return -202;  // FTP_ERR_INVALID_ARGUMENT
+    }
+    *out_size = 0;
+    auto future = control_thread_->enqueue_command_with_reply("SIZE", remote_path);
+    if (!future.valid()) {
+        return -401;
+    }
+    CommandReply reply = future.get();
+    if (reply.status != 0) {
+        return reply.status;
+    }
+    if (reply.code != 213) {
+        return -501;
+    }
+    const char* begin = reply.message.c_str();
+    char* end = nullptr;
+    unsigned long long value = std::strtoull(begin, &end, 10);
+    if (end == begin) {
+        return -501;
+    }
+    *out_size = static_cast<uint64_t>(value);
+    return 0;
 }
 
 inline void ProtocolEngine::set_command_timeout(uint32_t ms) {
