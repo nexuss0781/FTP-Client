@@ -174,6 +174,7 @@ FTP_ERR_SYSTEM = -102
 FTP_ERR_INVALID_HANDLE = -201
 FTP_ERR_INVALID_ARGUMENT = -202
 FTP_ERR_INVALID_STATE = -203
+FTP_ERR_NOT_IMPLEMENTED = -204
 FTP_ERR_AUTH_FAILED = -301
 FTP_ERR_AUTH_TLS_REQUIRED = -302
 FTP_ERR_CERT_VERIFY = -303
@@ -199,6 +200,7 @@ _ERROR_NAMES = {
     FTP_ERR_INVALID_HANDLE: "FTP_ERR_INVALID_HANDLE",
     FTP_ERR_INVALID_ARGUMENT: "FTP_ERR_INVALID_ARGUMENT",
     FTP_ERR_INVALID_STATE: "FTP_ERR_INVALID_STATE",
+    FTP_ERR_NOT_IMPLEMENTED: "FTP_ERR_NOT_IMPLEMENTED",
     FTP_ERR_AUTH_FAILED: "FTP_ERR_AUTH_FAILED",
     FTP_ERR_AUTH_TLS_REQUIRED: "FTP_ERR_AUTH_TLS_REQUIRED",
     FTP_ERR_CERT_VERIFY: "FTP_ERR_CERT_VERIFY",
@@ -258,23 +260,28 @@ def _check_error(code: int, operation: str = "operation"):
         FTPProtocolError,
         FTPIOError,
         FTPConfigError,
+        FTPNotImplementedError,
         FTPSystemError,
     )
     
     error_name = _get_error_name(code)
     
-    # Map error codes to exception types per spec Section 5.3
-    if -300 <= code < -200:
+    # M0 feature gate has its own explicit Python exception.
+    if code == FTP_ERR_NOT_IMPLEMENTED:
+        raise FTPNotImplementedError(code, f"{operation} failed: {error_name}")
+
+    # Map error codes to exception types using inclusive negative bands.
+    if -400 < code <= -300:
         raise FTPAuthError(code, f"{operation} failed: {error_name}")
-    elif -400 <= code < -300:
+    elif -500 < code <= -400:
         raise FTPNetworkError(code, f"{operation} failed: {error_name}")
-    elif -500 <= code < -400:
+    elif -600 < code <= -500:
         raise FTPProtocolError(code, f"{operation} failed: {error_name}")
-    elif -600 <= code < -500:
+    elif -700 < code <= -600:
         raise FTPIOError(code, f"{operation} failed: {error_name}")
-    elif -200 <= code < -100:
+    elif -300 < code <= -200:
         raise FTPConfigError(code, f"{operation} failed: {error_name}")
-    elif -100 <= code < 0:
+    elif -200 < code <= -100:
         raise FTPSystemError(code, f"{operation} failed: {error_name}")
     else:
         # Unknown error code

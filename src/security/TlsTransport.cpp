@@ -136,7 +136,7 @@ bool TlsTransport::verify_hostname(const char* hostname) {
             GENERAL_NAME* name = sk_GENERAL_NAME_value(san_names, i);
             if (name->type == GEN_DNS) {
                 ASN1_STRING* dns_name = name->d.dNSName;
-                const char* san = reinterpret_cast<const char*>(ASN1_STRING_data(dns_name));
+                const char* san = reinterpret_cast<const char*>(ASN1_STRING_get0_data(dns_name));
                 int san_len = ASN1_STRING_length(dns_name);
                 
                 // Simple wildcard matching
@@ -161,7 +161,7 @@ bool TlsTransport::verify_hostname(const char* hostname) {
         if (cn_idx >= 0) {
             X509_NAME_ENTRY* cn_entry = X509_NAME_get_entry(subject, cn_idx);
             ASN1_STRING* cn_asn1 = X509_NAME_ENTRY_get_data(cn_entry);
-            const char* cn = reinterpret_cast<const char*>(ASN1_STRING_data(cn_asn1));
+            const char* cn = reinterpret_cast<const char*>(ASN1_STRING_get0_data(cn_asn1));
             int cn_len = ASN1_STRING_length(cn_asn1);
             
             if (cn_len > 0 && cn[0] == '*') {

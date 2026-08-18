@@ -10,7 +10,8 @@ FTPError (base)
 ├── FTPNetworkError       # -4xx codes (transient, retryable)
 ├── FTPProtocolError      # -5xx codes (server misbehavior)
 ├── FTPIOError            # -6xx codes (local or remote I/O)
-├── FTPConfigError        # -2xx codes (invalid arguments)
+├── FTPConfigError        # -2xx codes (invalid arguments/state)
+├── FTPNotImplementedError # -204 features unavailable in current build
 └── FTPSystemError        # -1xx codes (OOM, system failure)
 """
 
@@ -85,6 +86,11 @@ class FTPConfigError(FTPError):
     Raised when invalid arguments are provided or the client is in an
     invalid state for the requested operation.
     """
+    pass
+
+
+class FTPNotImplementedError(FTPError):
+    """Raised when a public feature is not wired into the current build."""
     pass
 
 

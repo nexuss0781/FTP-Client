@@ -24,6 +24,7 @@ def test_exception_hierarchy():
         FTPProtocolError,
         FTPIOError,
         FTPConfigError,
+        FTPNotImplementedError,
         FTPSystemError,
     )
     
@@ -33,6 +34,7 @@ def test_exception_hierarchy():
     assert issubclass(FTPProtocolError, FTPError), "FTPProtocolError should inherit from FTPError"
     assert issubclass(FTPIOError, FTPError), "FTPIOError should inherit from FTPError"
     assert issubclass(FTPConfigError, FTPError), "FTPConfigError should inherit from FTPError"
+    assert issubclass(FTPNotImplementedError, FTPError), "FTPNotImplementedError should inherit from FTPError"
     assert issubclass(FTPSystemError, FTPError), "FTPSystemError should inherit from FTPError"
     
     print("[PASS] Exception hierarchy is correct")
@@ -72,6 +74,7 @@ def test_error_code_mapping():
         FTPProtocolError,
         FTPIOError,
         FTPConfigError,
+        FTPNotImplementedError,
         FTPSystemError,
     )
     
@@ -95,6 +98,7 @@ def test_error_code_mapping():
         (-602, FTPIOError, "remote IO"),
         (-201, FTPConfigError, "invalid handle"),
         (-202, FTPConfigError, "invalid argument"),
+        (-204, FTPNotImplementedError, "feature unavailable"),
         (-101, FTPSystemError, "no memory"),
         (-102, FTPSystemError, "system error"),
     ]

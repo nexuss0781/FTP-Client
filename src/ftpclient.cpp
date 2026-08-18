@@ -194,17 +194,12 @@ FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials
         return FTP_ERR_INVALID_ARGUMENT;
     }
     
-    /* Store credentials in secure vault */
-    auto& vault = impl->getVault();
-    int32_t ret = vault.store(creds_to_use);
-    if (ret != 0) {
-        return ret;
-    }
-    
-    /* Transition to CONNECTED state */
-    impl->setState(ftpclient::ClientState::CONNECTED);
-    
-    return FTP_OK;
+    /*
+     * M0 deliberately does not claim a real network connection. The protocol
+     * and TLS subsystems are still being wired into the public facade. Do not
+     * store credentials or transition state until the real session exists.
+     */
+    return FTP_ERR_NOT_IMPLEMENTED;
 }
 
 FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle) {
@@ -294,22 +289,20 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
         return FTP_ERR_INVALID_ARGUMENT;
     }
     
-    /* Must be connected to upload */
-    auto state = impl->getState();
-    if (state != ftpclient::ClientState::CONNECTED) {
-        return FTP_ERR_INVALID_STATE;
-    }
-    
-    /* Initialize result if provided */
+    /*
+     * M0 validates the request but has no real data-channel implementation.
+     * Return an explicit feature status rather than pretending the caller's
+     * connection state is the reason the operation cannot run.
+     */
     if (out_result != nullptr) {
-        out_result->status = FTP_ERR_INVALID_STATE;
+        out_result->status = FTP_ERR_NOT_IMPLEMENTED;
         out_result->files_total = 0;
         out_result->files_success = 0;
         out_result->files_failed = 0;
         out_result->bytes_transferred = 0;
     }
-    
-    return FTP_ERR_INVALID_STATE;
+
+    return FTP_ERR_NOT_IMPLEMENTED;
 }
 
 /* ============================================================================
@@ -319,8 +312,8 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
 
 FTP_API uint32_t FTP_CALL ftp_get_version(void) {
     /* Version format: 0xMMmmpp00 (Major, Minor, Patch) */
-    /* Phase 3 release: 1.0.0 */
-    return 0x01000000;
+    /* M0 development baseline: 0.1.0 */
+    return 0x00010000;
 }
 
 FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
@@ -328,24 +321,13 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
         return FTP_ERR_INVALID_ARGUMENT;
     }
     
-    /* Report capabilities compiled into this build */
-    uint64_t caps = 0;
-    
-    /* IPv6 support - always available with modern sockets */
-    caps |= FTP_CAP_IPV6;
-    
-    /* Resume support - will be implemented in Phase 4 */
-    caps |= FTP_CAP_RESUME;
-    
-    /* TLS - Phase 3 implemented */
-    caps |= FTP_CAP_TLS;
-    
-    /* sendfile - platform specific, check at runtime */
-#if defined(__linux__)
-    caps |= FTP_CAP_SENDFILE;
-#endif
-    
-    *out_caps = caps;
+    /*
+     * M0 truthfulness rule: a capability is public only when the exported
+     * execution path invokes and tests it end to end. The repository contains
+     * protocol/TLS/transfer scaffolding, but ftp_connect() and ftp_upload_dir()
+     * are not yet wired to those subsystems. Do not advertise latent features.
+     */
+    *out_caps = 0;
     return FTP_OK;
 }
 
