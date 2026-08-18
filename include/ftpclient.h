@@ -465,6 +465,7 @@ typedef struct {
     int32_t     resume_metadata_enabled; /* 1 = require matching sidecar and digest */
     const ftp_download_digest_t* file_digests; /* Nullable per-file directory manifest */
     uint32_t    file_digest_count;
+    int32_t     resume_allow_unverified; /* 1 = explicit legacy unsafe resume */
 } ftp_download_options_t;
 
 FTP_API int32_t FTP_CALL ftp_download_file_ex(

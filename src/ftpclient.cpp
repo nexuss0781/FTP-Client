@@ -487,8 +487,15 @@ FTP_API int32_t FTP_CALL ftp_download_file_ex(
             transfer_options.resume_enabled = options->resume_enabled != 0;
         }
         if (options->struct_size >= offsetof(ftp_download_options_t, resume_metadata_enabled) +
-                                    sizeof(options->resume_metadata_enabled)) {
-            transfer_options.resume_metadata_enabled = options->resume_metadata_enabled != 0;
+                                    sizeof(options->resume_metadata_enabled) &&
+            options->resume_metadata_enabled != 0) {
+            transfer_options.resume_metadata_enabled = true;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, resume_allow_unverified) +
+                                    sizeof(options->resume_allow_unverified) &&
+            options->resume_allow_unverified != 0) {
+            transfer_options.resume_metadata_enabled = false;
+            transfer_options.resume_allow_unverified = true;
         }
     }
 
@@ -580,8 +587,15 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
             transfer_options.resume_enabled = options->resume_enabled != 0;
         }
         if (options->struct_size >= offsetof(ftp_download_options_t, resume_metadata_enabled) +
-                                    sizeof(options->resume_metadata_enabled)) {
-            transfer_options.resume_metadata_enabled = options->resume_metadata_enabled != 0;
+                                    sizeof(options->resume_metadata_enabled) &&
+            options->resume_metadata_enabled != 0) {
+            transfer_options.resume_metadata_enabled = true;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, resume_allow_unverified) +
+                                    sizeof(options->resume_allow_unverified) &&
+            options->resume_allow_unverified != 0) {
+            transfer_options.resume_metadata_enabled = false;
+            transfer_options.resume_allow_unverified = true;
         }
     }
     const ftp_download_digest_t* file_digests = nullptr;

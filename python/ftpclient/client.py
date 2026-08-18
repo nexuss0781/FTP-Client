@@ -438,6 +438,7 @@ class FTPClient:
         c_options.expected_sha256 = options.expected_sha256.encode("ascii") if options.expected_sha256 else ffi.NULL
         c_options.resume_enabled = 1 if options.resume_enabled else 0
         c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
+        c_options.resume_allow_unverified = 1 if options.resume_allow_unverified else 0
         progress_cb = ffi.NULL
         progress_cb_id = None
         if progress is not None:
@@ -496,6 +497,7 @@ class FTPClient:
         c_options.expected_sha256 = options.expected_sha256.encode("ascii") if options.expected_sha256 else ffi.NULL
         c_options.resume_enabled = 1 if options.resume_enabled else 0
         c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
+        c_options.resume_allow_unverified = 1 if options.resume_allow_unverified else 0
         digest_array = ffi.NULL
         digest_strings = []
         if options.file_digests:
