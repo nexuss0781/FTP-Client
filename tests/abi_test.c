@@ -223,9 +223,9 @@ static void test_connection(void) {
     ftp_client_destroy(handle);
 }
 
-/* Test: Upload Directory (M2 Unavailable) */
+/* Test: Upload Directory (M3 Single-File Path) */
 static void test_upload_dir_stub(void) {
-    printf("\n=== Testing Upload Directory (M2 Unavailable) ===\n");
+    printf("\n=== Testing Upload Directory (M3 Single-File Path) ===\n");
     
     ftp_client_t* handle = NULL;
     int32_t ret = ftp_client_create(&handle);
@@ -236,10 +236,10 @@ static void test_upload_dir_stub(void) {
     memset(&result, 0, sizeof(result));
     
     ret = ftp_upload_dir(handle, "/local", "/remote", NULL, NULL, NULL, &result);
-    TEST_ASSERT("ftp_upload_dir reports not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED);
-    TEST_ASSERT("upload result reports not implemented", result.status == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("ftp_upload_dir without connection fails with invalid state", ret == FTP_ERR_INVALID_STATE);
+    TEST_ASSERT("upload result is zeroed on invalid state", result.status == FTP_OK && result.file_results == NULL);
     
-    /* A valid upload request remains unavailable in M2. */
+    /* The ABI test uses implicit FTPS only to avoid requiring a live server. */
     ftp_credentials_t creds;
     memset(&creds, 0, sizeof(creds));
     creds.host = "localhost";
@@ -260,9 +260,10 @@ static void test_upload_dir_stub(void) {
     ret = ftp_upload_dir(handle, "", "/remote", NULL, NULL, NULL, NULL);
     TEST_ASSERT("ftp_upload_dir with empty local_path fails", ret == FTP_ERR_INVALID_ARGUMENT);
     
-    /* Test valid upload request reports not implemented in M2. */
+    /* A valid request after an unsupported connection is still invalid state. */
     ret = ftp_upload_dir(handle, "/local/test", "/remote/test", NULL, NULL, NULL, &result);
-    TEST_ASSERT("ftp_upload_dir reports not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED);
+    TEST_ASSERT("ftp_upload_dir after failed connect reports invalid state", ret == FTP_ERR_INVALID_STATE);
+    TEST_ASSERT("ftp_result_free accepts zeroed result", ftp_result_free(&result) == FTP_OK);
     
     ftp_client_destroy(handle);
 }

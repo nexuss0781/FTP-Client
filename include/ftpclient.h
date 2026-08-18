@@ -391,24 +391,25 @@ FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle);
 FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle);
 
 /* ----------------------------------------------------------------------------
- * 6.4 Transfer Operations (Unavailable in M0 — signatures only)
+ * 6.4 Transfer Operations (M3 single-file path)
  * ----------------------------------------------------------------------------
  */
 
 /**
- * Upload directory tree. M0 validates arguments but returns
- * FTP_ERR_NOT_IMPLEMENTED for a valid request.
+ * Upload a local file or directory tree. M3 executes a serialized single-file
+ * STOR path with EPSV/PASV passive negotiation and protected data TLS when
+ * the authenticated control session is explicit FTPS.
  * 
  * @param handle        The client handle
- * @param local_path    UTF-8, null-terminated local directory path
+ * @param local_path    UTF-8, null-terminated local file or directory path
  * @param remote_path   UTF-8, null-terminated remote directory path
  * @param options       Nullable upload options (uses defaults if NULL)
  * @param progress_cb   Nullable progress callback
  * @param user_data     Opaque pointer passed to progress_cb
  * @param out_result    Nullable result structure (caller-allocated, must call ftp_result_free())
- * @return FTP_ERR_NOT_IMPLEMENTED in M0 for a valid request; otherwise an
- *         argument/state error. A future implementation will return FTP_OK
- *         only after server final-reply and transfer verification.
+ * @return FTP_OK only after the data socket closes and the server returns a
+ *         successful final transfer reply; otherwise a mapped argument, state,
+ *         transport, or server error.
  */
 FTP_API int32_t FTP_CALL ftp_upload_dir(
     ftp_client_t*           handle,

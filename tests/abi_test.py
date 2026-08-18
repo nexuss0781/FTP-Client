@@ -81,6 +81,18 @@ class FtpUploadOptions(ctypes.Structure):
     ]
 
 
+class FtpFileResult(ctypes.Structure):
+    """ftp_file_result_t structure."""
+    _fields_ = [
+        ("local_path", ctypes.c_char_p),
+        ("remote_path", ctypes.c_char_p),
+        ("status", ctypes.c_int32),
+        ("bytes_sent", ctypes.c_uint64),
+        ("attempt_count", ctypes.c_uint32),
+        ("final_error", ctypes.c_int32),
+    ]
+
+
 class FtpResult(ctypes.Structure):
     """ftp_result_t structure."""
     _fields_ = [
@@ -89,6 +101,8 @@ class FtpResult(ctypes.Structure):
         ("files_success", ctypes.c_uint64),
         ("files_failed", ctypes.c_uint64),
         ("bytes_transferred", ctypes.c_uint64),
+        ("file_result_count", ctypes.c_uint64),
+        ("file_results", ctypes.POINTER(FtpFileResult)),
     ]
 
 
@@ -338,8 +352,8 @@ def test_connection(lib):
 
 
 def test_upload_dir_stub(lib):
-    """Test the M2 upload contract: validation plus explicit unavailable status."""
-    print("\n=== Testing Upload Directory (M2 Unavailable) ===")
+    """Test the M3 upload contract: validation plus authenticated-state checks."""
+    print("\n=== Testing Upload Directory (M3 Single-File Path) ===")
     
     # Setup signature - note: progress callback can be None (ctypes converts NULL automatically)
     lib.ftp_upload_dir.restype = ctypes.c_int32
@@ -362,12 +376,12 @@ def test_upload_dir_stub(lib):
     creds.port = 21
     lib.ftp_connect(handle, ctypes.byref(creds))
     
-    # A valid request is unavailable in M2 regardless of connection state.
+    # A valid request requires an authenticated connection in M3.
     lib.ftp_disconnect(handle)
     result = FtpResult()
     ret = lib.ftp_upload_dir(handle, b"/local", b"/remote", None, None, None, ctypes.byref(result))
-    test_assert("ftp_upload_dir reports not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED)
-    test_assert("upload result reports not implemented", result.status == FTP_ERR_NOT_IMPLEMENTED)
+    test_assert("ftp_upload_dir without connection fails with invalid state", ret == FTP_ERR_INVALID_STATE)
+    test_assert("upload result is zeroed on invalid state", result.status == FTP_OK and not bool(result.file_results))
     
     # Reconnect
     lib.ftp_connect(handle, ctypes.byref(creds))
@@ -379,9 +393,12 @@ def test_upload_dir_stub(lib):
     ret = lib.ftp_upload_dir(handle, b"/local", None, None, None, None, None)
     test_assert("ftp_upload_dir with NULL remote_path fails", ret == FTP_ERR_INVALID_ARGUMENT)
     
-    # A valid transfer request remains unavailable in M2.
+    # A failed connection does not transition the handle into CONNECTED.
     ret = lib.ftp_upload_dir(handle, b"/local/test", b"/remote/test", None, None, None, ctypes.byref(result))
-    test_assert("ftp_upload_dir reports not implemented in M2", ret == FTP_ERR_NOT_IMPLEMENTED)
+    test_assert("ftp_upload_dir after failed connect reports invalid state", ret == FTP_ERR_INVALID_STATE)
+    lib.ftp_result_free.argtypes = [ctypes.POINTER(FtpResult)]
+    lib.ftp_result_free.restype = ctypes.c_int32
+    test_assert("ftp_result_free accepts zeroed result", lib.ftp_result_free(ctypes.byref(result)) == FTP_OK)
     
     lib.ftp_client_destroy(handle)
 
