@@ -279,7 +279,7 @@ def test_m8_exports(lib):
 def test_m11_exports(lib):
     """Validate M11 server-feature exports and ABI preconditions."""
     print("\\n=== Testing M11 Server Features ===")
-    for symbol in ("ftp_get_server_capabilities", "ftp_get_remote_file_mdtm", "ftp_get_remote_file_hash"):
+    for symbol in ("ftp_get_server_capabilities", "ftp_get_remote_file_mdtm", "ftp_get_remote_file_hash", "ftp_verify_local_file_with_remote_hash"):
         test_assert(f"{symbol} is exported", hasattr(lib, symbol))
     lib.ftp_get_server_capabilities.restype = ctypes.c_int32
     lib.ftp_get_server_capabilities.argtypes = [ctypes.c_void_p, ctypes.POINTER(FtpServerCapabilities)]
@@ -287,6 +287,8 @@ def test_m11_exports(lib):
     lib.ftp_get_remote_file_mdtm.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
     lib.ftp_get_remote_file_hash.restype = ctypes.c_int32
     lib.ftp_get_remote_file_hash.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+    lib.ftp_verify_local_file_with_remote_hash.restype = ctypes.c_int32
+    lib.ftp_verify_local_file_with_remote_hash.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
     capabilities = FtpServerCapabilities()
     capabilities.struct_size = ctypes.sizeof(FtpServerCapabilities)
     test_assert("server capabilities NULL handle fails",
@@ -295,6 +297,8 @@ def test_m11_exports(lib):
                  lib.ftp_get_remote_file_mdtm(None, b"/file", ctypes.create_string_buffer(64), 64) == FTP_ERR_INVALID_HANDLE)
     test_assert("remote HASH NULL handle fails",
                  lib.ftp_get_remote_file_hash(None, b"/file", b"SHA-256", ctypes.create_string_buffer(129), 129) == FTP_ERR_INVALID_HANDLE)
+    test_assert("local/remote HASH verification NULL handle fails",
+                 lib.ftp_verify_local_file_with_remote_hash(None, b"/local", b"/file", b"SHA-256") == FTP_ERR_INVALID_HANDLE)
     handle = ctypes.c_void_p()
     lib.ftp_client_create(ctypes.byref(handle))
     test_assert("server capabilities disconnected handle fails",

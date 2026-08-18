@@ -485,3 +485,11 @@ def ftp_get_remote_file_hash(handle: Any, remote_path: str, algorithm: str = "SH
         handle, remote_path.encode("utf-8"), algorithm.encode("ascii"), output, 129)
     _check_error(ret, "ftp_get_remote_file_hash")
     return ffi.string(output).decode("ascii")
+
+
+def ftp_verify_local_file_with_remote_hash(
+    handle: Any, local_path: str, remote_path: str, algorithm: str = "SHA-256") -> None:
+    """Compare a local file with the server-side HASH response."""
+    ret = lib.ftp_verify_local_file_with_remote_hash(
+        handle, local_path.encode("utf-8"), remote_path.encode("utf-8"), algorithm.encode("ascii"))
+    _check_error(ret, "ftp_verify_local_file_with_remote_hash")

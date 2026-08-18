@@ -887,6 +887,21 @@ FTP_API int32_t FTP_CALL ftp_get_remote_file_hash(
     return copy_string_to_buffer(hash, out_hash, out_size);
 }
 
+FTP_API int32_t FTP_CALL ftp_verify_local_file_with_remote_hash(
+    ftp_client_t* handle, const char* local_path, const char* remote_path,
+    const char* algorithm) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (local_path == nullptr || local_path[0] == '\0' ||
+        remote_path == nullptr || remote_path[0] == '\0' ||
+        algorithm == nullptr || algorithm[0] == '\0') {
+        return FTP_ERR_INVALID_ARGUMENT;
+    }
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    return impl->getProtocolEngine().verify_local_file_with_remote_hash(
+        local_path, remote_path, algorithm);
+}
 FTP_API int32_t FTP_CALL ftp_result_free(ftp_result_t* result) {
     if (result == nullptr) {
         return FTP_ERR_INVALID_ARGUMENT;

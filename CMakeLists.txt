@@ -223,6 +223,7 @@ if(MSVC)
         "    ftp_get_server_capabilities\n"
         "    ftp_get_remote_file_mdtm\n"
         "    ftp_get_remote_file_hash\n"
+        "    ftp_verify_local_file_with_remote_hash\n"
         "    ftp_result_free\n"
         "    ftp_get_version\n"
         "    ftp_get_capabilities\n"
