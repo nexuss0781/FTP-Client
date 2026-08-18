@@ -4,7 +4,7 @@
 **Milestone:** M11  
 **Branch:** `feature/ftps-m11-capability-integrity`  
 **Author:** Manus AI  
-**Status:** Ready for final commit and merge
+**Status:** Complete and merged into `main`
 
 ## Executive status
 
@@ -42,7 +42,7 @@ The implementation remains separate from Ahadu Deploy. It provides the transport
 
 ## Commit lineage
 
-The feature branch currently contains the original M11 implementation commit `ed6faa8` (`Add M11 FEAT and HASH support`) and the binding commit `ea52601` (`Expose M11 server integrity bindings`). The final implementation patch adds explicit local-versus-remote verification, its tests, and the three milestone records. It is ready to be committed as the final M11 change before merging into `main`.
+The feature branch contains the original M11 implementation commit `ed6faa8` (`Add M11 FEAT and HASH support`), the binding commit `ea52601` (`Expose M11 server integrity bindings`), and the final verification/documentation commit `ad6f753` (`Complete M11 capability integrity verification`). M11 was merged into `main` with merge commit `8480128` (`Merge M11 capability integrity verification into main`) and pushed to `origin/main`.
 
 ## Known intentional boundary
 
