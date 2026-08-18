@@ -81,7 +81,8 @@ enum class FtpCommand : int32_t {
     XCWD = 32,      // Extended change working directory
     XMKD = 33,      // Extended make directory
     XRMD = 34,      // Extended remove directory
-    MLSD = 35       // Machine-readable directory listing
+    MLSD = 35,      // Machine-readable directory listing
+    HASH = 36       // Server-side file hash
 };
 
 /**
@@ -292,6 +293,7 @@ private:
             case FtpCommand::RNFR:
             case FtpCommand::SIZE:
             case FtpCommand::MDTM:
+            case FtpCommand::HASH:
             case FtpCommand::OPTS:
             case FtpCommand::SITE:
                 if (reply_code >= 200 && reply_code < 300) {

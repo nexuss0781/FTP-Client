@@ -32,6 +32,8 @@
 #include <algorithm>
 #include <vector>
 #include <sstream>
+#include <set>
+#include <cctype>
 
 namespace ftpclient { namespace protocol {
 
@@ -67,6 +69,17 @@ struct ConnectionCredentials {
         , use_tls(0)
         , verify_cert(2)
     {}
+};
+
+struct ServerCapabilities {
+    bool feat_supported = false;
+    bool size_supported = false;
+    bool mdtm_supported = false;
+    bool hash_supported = false;
+    bool hash_sha1 = false;
+    bool hash_sha256 = false;
+    bool hash_sha512 = false;
+    bool hash_md5 = false;
 };
 
 struct TransferOptions {
@@ -222,6 +235,14 @@ public:
 
     /** Query a remote file size; returns -502 when the file is absent. */
     int32_t get_remote_file_size(const std::string& remote_path, uint64_t* out_size);
+
+    /** Discover and cache session-scoped FEAT capabilities. */
+    int32_t refresh_server_capabilities();
+    const ServerCapabilities& get_server_capabilities() const { return capabilities_; }
+    int32_t get_remote_file_mdtm(const std::string& remote_path, std::string* out_modify);
+    int32_t get_remote_file_hash(const std::string& remote_path,
+                                 const std::string& algorithm,
+                                 std::string* out_hash);
     
     /* ========================================================================
      * Configuration
@@ -273,6 +294,8 @@ private:
     TransportFactory transport_factory_;
     bool use_tls_;
     std::shared_ptr<std::atomic<bool>> cancel_token_;
+    ServerCapabilities capabilities_;
+    bool capabilities_loaded_ = false;
 
     void abort_control_session() {
         if (control_thread_) {
@@ -281,6 +304,8 @@ private:
         }
         control_thread_ = std::make_unique<ControlThread>();
         control_transport_.reset();
+        capabilities_ = ServerCapabilities();
+        capabilities_loaded_ = false;
     }
 };
 
@@ -487,6 +512,8 @@ inline int32_t ProtocolEngine::disconnect() {
 
     control_thread_ = std::make_unique<ControlThread>();
     creds_ = ConnectionCredentials();
+    capabilities_ = ServerCapabilities();
+    capabilities_loaded_ = false;
     return ret;
 }
 
@@ -1367,6 +1394,133 @@ inline int32_t ProtocolEngine::create_remote_dir(const std::string& remote_path)
         return -401;  // FTP_ERR_CONNECT
     }
     return future.get();
+}
+
+inline std::string trim_feature_line(const std::string& input) {
+    size_t begin = 0;
+    while (begin < input.size() && std::isspace(static_cast<unsigned char>(input[begin]))) ++begin;
+    size_t end = input.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(input[end - 1]))) --end;
+    return input.substr(begin, end - begin);
+}
+
+inline std::string uppercase_feature_token(std::string token) {
+    for (char& ch : token) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    return token;
+}
+
+inline bool is_hex_digest_token(const std::string& token) {
+    if (token.size() != 32 && token.size() != 40 && token.size() != 64 && token.size() != 128) {
+        return false;
+    }
+    return std::all_of(token.begin(), token.end(), [](char ch) {
+        return std::isdigit(static_cast<unsigned char>(ch)) ||
+               (std::tolower(static_cast<unsigned char>(ch)) >= 'a' &&
+                std::tolower(static_cast<unsigned char>(ch)) <= 'f');
+    });
+}
+
+inline int32_t ProtocolEngine::refresh_server_capabilities() {
+    if (!is_authenticated() || !control_thread_) return -203;
+    if (capabilities_loaded_) return 0;
+
+    auto future = control_thread_->enqueue_command_with_reply("FEAT", "");
+    if (!future.valid()) return -401;
+    CommandReply reply = future.get();
+    if (reply.status != 0) {
+        if (reply.code == 500 || reply.code == 502 || reply.code == 504) {
+            capabilities_loaded_ = true;
+            return 0;
+        }
+        return reply.status;
+    }
+    if (reply.code != 211 && reply.code != 200) return -501;
+
+    capabilities_.feat_supported = true;
+    const std::string feature_text = reply.full_message.empty() ? reply.message : reply.full_message;
+    std::istringstream lines(feature_text);
+    std::string line;
+    while (std::getline(lines, line)) {
+        line = trim_feature_line(line);
+        if (line.empty()) continue;
+        std::istringstream words(line);
+        std::string feature;
+        words >> feature;
+        feature = uppercase_feature_token(feature);
+        if (feature == "SIZE") {
+            capabilities_.size_supported = true;
+        } else if (feature == "MDTM") {
+            capabilities_.mdtm_supported = true;
+        } else if (feature == "HASH") {
+            capabilities_.hash_supported = true;
+            std::string algorithm;
+            while (words >> algorithm) {
+                size_t start = 0;
+                while (start < algorithm.size()) {
+                    const size_t separator = algorithm.find(';', start);
+                    std::string item = uppercase_feature_token(
+                        algorithm.substr(start, separator == std::string::npos ? std::string::npos : separator - start));
+                    item.erase(std::remove(item.begin(), item.end(), ','), item.end());
+                    if (item == "MD5") capabilities_.hash_md5 = true;
+                    else if (item == "SHA-1" || item == "SHA1") capabilities_.hash_sha1 = true;
+                    else if (item == "SHA-256" || item == "SHA256") capabilities_.hash_sha256 = true;
+                    else if (item == "SHA-512" || item == "SHA512") capabilities_.hash_sha512 = true;
+                    if (separator == std::string::npos) break;
+                    start = separator + 1;
+                }
+            }
+        }
+    }
+    capabilities_loaded_ = true;
+    return 0;
+}
+
+inline int32_t ProtocolEngine::get_remote_file_mdtm(const std::string& remote_path,
+                                                     std::string* out_modify) {
+    if (!is_authenticated() || remote_path.empty() || out_modify == nullptr || !control_thread_) return -202;
+    *out_modify = std::string();
+    const int32_t capability_ret = refresh_server_capabilities();
+    if (capability_ret != 0) return capability_ret;
+    if (!capabilities_.mdtm_supported) return -204;
+    auto future = control_thread_->enqueue_command_with_reply("MDTM", remote_path);
+    if (!future.valid()) return -401;
+    CommandReply reply = future.get();
+    if (reply.status != 0) return reply.status;
+    if (reply.code != 213 || reply.message.empty()) return -501;
+    *out_modify = reply.message;
+    return 0;
+}
+
+inline int32_t ProtocolEngine::get_remote_file_hash(const std::string& remote_path,
+                                                     const std::string& algorithm,
+                                                     std::string* out_hash) {
+    if (!is_authenticated() || remote_path.empty() || algorithm.empty() || out_hash == nullptr || !control_thread_) return -202;
+    *out_hash = std::string();
+    const int32_t capability_ret = refresh_server_capabilities();
+    if (capability_ret != 0) return capability_ret;
+    if (!capabilities_.hash_supported) return -204;
+    const std::string requested = uppercase_feature_token(algorithm);
+    if ((requested == "MD5" && !capabilities_.hash_md5) ||
+        ((requested == "SHA-1" || requested == "SHA1") && !capabilities_.hash_sha1) ||
+        ((requested == "SHA-256" || requested == "SHA256") && !capabilities_.hash_sha256) ||
+        ((requested == "SHA-512" || requested == "SHA512") && !capabilities_.hash_sha512)) {
+        return -204;
+    }
+    auto future = control_thread_->enqueue_command_with_reply("HASH", remote_path);
+    if (!future.valid()) return -401;
+    CommandReply reply = future.get();
+    if (reply.status != 0) return reply.status;
+    if (reply.code != 213 && reply.code != 250) return -501;
+    std::istringstream words(reply.message);
+    std::string token;
+    while (words >> token) {
+        if (is_hex_digest_token(token)) {
+            for (char& ch : token) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            *out_hash = token;
+            return 0;
+        }
+    }
+    return -501;
 }
 
 inline int32_t ProtocolEngine::get_remote_file_size(const std::string& remote_path, uint64_t* out_size) {

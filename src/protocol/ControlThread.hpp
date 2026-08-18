@@ -30,6 +30,7 @@ struct CommandReply {
     int32_t status;
     uint16_t code;
     std::string message;
+    std::string full_message;
 
     CommandReply() : status(-401), code(0) {}
 };
@@ -43,6 +44,7 @@ struct Command {
     bool final_transfer_reply = false;
     uint16_t reply_code = 0;
     std::string reply_message;
+    std::string reply_full_message;
     
     Command() = default;
     Command(const std::string& v, const std::string& a) : verb(v), arg(a) {}
@@ -383,6 +385,7 @@ inline void ControlThread::run_loop() {
                 detailed.status = result;
                 detailed.code = cmd.reply_code;
                 detailed.message = std::move(cmd.reply_message);
+                detailed.full_message = std::move(cmd.reply_full_message);
                 cmd.detailed_result.set_value(std::move(detailed));
             } else {
                 cmd.result.set_value(result);
@@ -422,6 +425,7 @@ inline int32_t ControlThread::execute_command(Command& cmd) {
 
     cmd.reply_code = reply.code;
     cmd.reply_message.assign(reply.message.data(), reply.message.size());
+    cmd.reply_full_message = reply.full_message;
 
     // A passive-command rejection is recoverable: callers may try the other
     // passive dialect without losing the authenticated control session.
@@ -432,6 +436,9 @@ inline int32_t ControlThread::execute_command(Command& cmd) {
             (cmd.verb == "SIZE" &&
              (reply.code == 500 || reply.code == 502 || reply.code == 504 ||
               reply.code == 550)) ||
+            (cmd.verb == "FEAT" && reply.code >= 400) ||
+            (cmd.verb == "MDTM" && reply.code >= 400) ||
+            (cmd.verb == "HASH" && reply.code >= 400) ||
             (cmd.verb == "STOR" && reply.code >= 400) ||
             (cmd.final_transfer_reply && reply.code >= 400)) {
             state_machine_.set_state(ProtocolState::AUTHENTICATED);
@@ -543,9 +550,9 @@ inline FtpCommand ControlThread::map_verb_to_command(const std::string& verb) {
     if (verb == "TYPE") return FtpCommand::TYPE;
     if (verb == "SYST") return FtpCommand::SYST;
     if (verb == "OPTS") return FtpCommand::OPTS;
-    if (verb == "MDTM") return FtpCommand::MDTM;
-    
-    return FtpCommand::SITE;  // Default to SITE for unknown
+    if (verb == "MLSD") return FtpCommand::MLSD;
+    if (verb == "HASH") return FtpCommand::HASH;
+    return FtpCommand::NOOP;  // Default to SITE for unknown
 }
 
 }} // namespace ftpclient::protocol

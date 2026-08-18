@@ -220,6 +220,9 @@ if(MSVC)
         "    ftp_delete_remote_file\n"
         "    ftp_remove_remote_directory\n"
         "    ftp_rename_remote\n"
+        "    ftp_get_server_capabilities\n"
+        "    ftp_get_remote_file_mdtm\n"
+        "    ftp_get_remote_file_hash\n"
         "    ftp_result_free\n"
         "    ftp_get_version\n"
         "    ftp_get_capabilities\n"
@@ -349,6 +352,16 @@ set_target_properties(m9_download_dir_integration_test PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 add_test(NAME m9_download_dir_integration_test COMMAND m9_download_dir_integration_test)
+
+# M11 FEAT/MDTM/HASH capability and remote-integrity integration test
+add_executable(m11_server_features_integration_test tests/m11_server_features_integration_test.cpp)
+target_include_directories(m11_server_features_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(m11_server_features_integration_test PRIVATE ftpclient pthread)
+set_target_properties(m11_server_features_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME m11_server_features_integration_test COMMAND m11_server_features_integration_test)
 
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)

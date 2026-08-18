@@ -29,6 +29,14 @@ static void init_locale() {
     }
 }
 
+static int32_t copy_string_to_buffer(const std::string& value,
+                                      char* output, uint32_t output_size) {
+    if (output == nullptr || output_size == 0) return FTP_ERR_INVALID_ARGUMENT;
+    if (value.size() + 1 > output_size) return FTP_ERR_INVALID_ARGUMENT;
+    std::memcpy(output, value.c_str(), value.size() + 1);
+    return FTP_OK;
+}
+
 static bool path_is_within_root(const std::filesystem::path& root,
                                 const std::filesystem::path& candidate) {
     std::error_code error;
@@ -811,6 +819,72 @@ FTP_API int32_t FTP_CALL ftp_rename_remote(ftp_client_t* handle,
         to_path == nullptr || to_path[0] == '\0') return FTP_ERR_INVALID_ARGUMENT;
     if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
     return impl->getProtocolEngine().rename_remote_path(from_path, to_path);
+}
+
+FTP_API int32_t FTP_CALL ftp_get_server_capabilities(
+    ftp_client_t* handle, ftp_server_capabilities_t* out_caps) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (out_caps == nullptr || out_caps->struct_size < sizeof(uint32_t)) {
+        return FTP_ERR_INVALID_ARGUMENT;
+    }
+    const int32_t status = impl->getProtocolEngine().refresh_server_capabilities();
+    if (status != FTP_OK) return status;
+    const auto& capabilities = impl->getProtocolEngine().get_server_capabilities();
+    const uint32_t caller_size = std::min<uint32_t>(out_caps->struct_size,
+                                                     sizeof(*out_caps));
+    std::memset(out_caps, 0, caller_size);
+    out_caps->struct_size = caller_size;
+#define FTP_SET_SERVER_CAP_FIELD(field, value) \
+    do { \
+        if (caller_size >= offsetof(ftp_server_capabilities_t, field) + sizeof(out_caps->field)) \
+            out_caps->field = (value); \
+    } while (0)
+    FTP_SET_SERVER_CAP_FIELD(feat_supported, capabilities.feat_supported ? 1 : 0);
+    FTP_SET_SERVER_CAP_FIELD(size_supported, capabilities.size_supported ? 1 : 0);
+    FTP_SET_SERVER_CAP_FIELD(mdtm_supported, capabilities.mdtm_supported ? 1 : 0);
+    FTP_SET_SERVER_CAP_FIELD(hash_supported, capabilities.hash_supported ? 1 : 0);
+    uint32_t algorithms = 0;
+    if (capabilities.hash_md5) algorithms |= FTP_HASH_ALG_MD5;
+    if (capabilities.hash_sha1) algorithms |= FTP_HASH_ALG_SHA1;
+    if (capabilities.hash_sha256) algorithms |= FTP_HASH_ALG_SHA256;
+    if (capabilities.hash_sha512) algorithms |= FTP_HASH_ALG_SHA512;
+    FTP_SET_SERVER_CAP_FIELD(hash_algorithms, algorithms);
+#undef FTP_SET_SERVER_CAP_FIELD
+    return FTP_OK;
+}
+
+FTP_API int32_t FTP_CALL ftp_get_remote_file_mdtm(
+    ftp_client_t* handle, const char* remote_path,
+    char* out_modify, uint32_t out_size) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (remote_path == nullptr || remote_path[0] == '\0' ||
+        out_modify == nullptr || out_size == 0) return FTP_ERR_INVALID_ARGUMENT;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    std::string modify;
+    const int32_t status = impl->getProtocolEngine().get_remote_file_mdtm(remote_path, &modify);
+    if (status != FTP_OK) return status;
+    return copy_string_to_buffer(modify, out_modify, out_size);
+}
+
+FTP_API int32_t FTP_CALL ftp_get_remote_file_hash(
+    ftp_client_t* handle, const char* remote_path,
+    const char* algorithm, char* out_hash, uint32_t out_size) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (remote_path == nullptr || remote_path[0] == '\0' ||
+        algorithm == nullptr || algorithm[0] == '\0' ||
+        out_hash == nullptr || out_size == 0) return FTP_ERR_INVALID_ARGUMENT;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    std::string hash;
+    const int32_t status = impl->getProtocolEngine().get_remote_file_hash(
+        remote_path, algorithm, &hash);
+    if (status != FTP_OK) return status;
+    return copy_string_to_buffer(hash, out_hash, out_size);
 }
 
 FTP_API int32_t FTP_CALL ftp_result_free(ftp_result_t* result) {
