@@ -115,8 +115,9 @@ class DownloadOptions:
     expected_sha256: Optional[str] = None
     stall_timeout_ms: int = 0
     resume_enabled: bool = False
-    resume_metadata_enabled: bool = False
+    resume_metadata_enabled: bool = True
     file_digests: Tuple[DownloadDigest, ...] = ()
+    resume_allow_unverified: bool = False
 
     def __post_init__(self) -> None:
         if self.stall_timeout_ms < 0:

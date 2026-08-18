@@ -102,6 +102,7 @@ class FtpDownloadOptions(ctypes.Structure):
         ("resume_metadata_enabled", ctypes.c_int32),
         ("file_digests", ctypes.POINTER(FtpDownloadDigest)),
         ("file_digest_count", ctypes.c_uint32),
+        ("resume_allow_unverified", ctypes.c_int32),
     ]
 
 

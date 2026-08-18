@@ -73,7 +73,8 @@ struct TransferOptions {
     std::shared_ptr<std::atomic<bool>> cancel_token;
     uint32_t stall_timeout_ms = 0;
     bool resume_enabled = false;
-    bool resume_metadata_enabled = false;
+    bool resume_metadata_enabled = true;
+    bool resume_allow_unverified = false;
     std::string expected_sha256;
 };
 

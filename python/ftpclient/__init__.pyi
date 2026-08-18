@@ -52,6 +52,7 @@ class DownloadOptions:
     resume_enabled: bool
     resume_metadata_enabled: bool
     file_digests: Tuple[DownloadDigest, ...]
+    resume_allow_unverified: bool
 
 
 @dataclass(frozen=True)

@@ -224,6 +224,25 @@ int main() {
     assert(std::string(result.file_results[1].remote_path) == "/deploy/hello.txt");
     assert(ftp_result_free(&result) == FTP_OK);
 
+    const fs::path outside_file = "/tmp/ftpclient_m10_outside.txt";
+    {
+        std::ofstream outside(outside_file, std::ios::trunc);
+        outside << "sentinel";
+    }
+    fs::remove(root / "hello.txt", error);
+    fs::create_symlink(outside_file, root / "hello.txt", error);
+    assert(!error);
+    ftp_result_t symlink_result{};
+    assert(ftp_download_dir(client, root.c_str(), "/deploy", &options,
+                            nullptr, nullptr, &symlink_result) == FTP_ERR_INVALID_ARGUMENT);
+    assert(symlink_result.status == FTP_ERR_INVALID_ARGUMENT);
+    assert(ftp_result_free(&symlink_result) == FTP_OK);
+    std::ifstream outside_after(outside_file, std::ios::binary);
+    std::string outside_content((std::istreambuf_iterator<char>(outside_after)), {});
+    assert(outside_content == "sentinel");
+    fs::remove(root / "hello.txt", error);
+    fs::remove(outside_file, error);
+
     ftp_download_options_t ambiguous_options{};
     ambiguous_options.struct_size = sizeof(ambiguous_options);
     ambiguous_options.expected_sha256 = digests[0].sha256;
@@ -252,13 +271,21 @@ int main() {
     const fs::path resume_final = resume_root / "hello.txt";
     const fs::path resume_part = resume_final.string() + ".ftpclient.part";
     const fs::path resume_meta = resume_part.string() + ".meta";
+    const fs::path resume_meta_tmp = resume_meta.string() + ".tmp";
     {
         std::ofstream partial(resume_part, std::ios::binary);
         partial << "he";
+        std::ofstream metadata(resume_meta, std::ios::trunc);
+        metadata << "version=1\n"
+                 << "remote=/deploy/hello.txt\n"
+                 << "size=5\n"
+                 << "expected=\n"
+                 << "bytes=2\n";
     }
     ftp_download_options_t resume_options{};
     resume_options.struct_size = sizeof(resume_options);
     resume_options.resume_enabled = 1;
+    resume_options.resume_metadata_enabled = 1;
     ftp_result_t resume_result{};
     assert(ftp_download_file_ex(client, resume_final.c_str(), "/deploy/hello.txt",
                                 &resume_options, nullptr, nullptr, &resume_result) == FTP_OK);
@@ -267,6 +294,7 @@ int main() {
     assert(resumed_content == "hello");
     assert(!fs::exists(resume_part));
     assert(!fs::exists(resume_meta));
+    assert(!fs::exists(resume_meta_tmp));
     assert(ftp_result_free(&resume_result) == FTP_OK);
     assert(ftp_disconnect(client) == FTP_OK);
     assert(ftp_client_destroy(client) == FTP_OK);
