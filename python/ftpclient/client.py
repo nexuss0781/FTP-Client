@@ -25,6 +25,10 @@ from ftpclient._core import (
     ftp_client_destroy,
     ftp_cancel,
     ftp_clear_cancel,
+    ftp_get_server_capabilities,
+    ftp_get_remote_file_mdtm,
+    ftp_get_remote_file_hash,
+    ftp_verify_local_file_with_remote_hash,
 )
 from ftpclient.types import (
     Credentials, UploadOptions, DownloadDigest, DownloadOptions, UploadResult, DownloadResult, FileResult
@@ -558,6 +562,48 @@ class FTPClient:
         if self._handle is None:
             raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
         _check_error(ftp_clear_cancel(self._handle), "clear_cancel")
+
+    def server_capabilities(self):
+        """Return FEAT-derived capabilities for the authenticated session."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        if not self._connected:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
+        from ftpclient.types import ServerCapabilities
+        values = ftp_get_server_capabilities(self._handle)
+        return ServerCapabilities(
+            feat_supported=bool(values["feat_supported"]),
+            size_supported=bool(values["size_supported"]),
+            mdtm_supported=bool(values["mdtm_supported"]),
+            hash_supported=bool(values["hash_supported"]),
+            hash_algorithms=values["hash_algorithms"],
+        )
+
+    def remote_file_mdtm(self, remote_path: str) -> str:
+        """Return the server MDTM timestamp for a remote file."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        if not self._connected:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
+        return ftp_get_remote_file_mdtm(self._handle, remote_path)
+
+    def remote_file_hash(self, remote_path: str, algorithm: str = "SHA-256") -> str:
+        """Return a validated server-side hash for a remote file."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        if not self._connected:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
+        return ftp_get_remote_file_hash(self._handle, remote_path, algorithm)
+
+    def verify_local_file_with_remote_hash(
+        self, local_path: str, remote_path: str, algorithm: str = "SHA-256"
+    ) -> None:
+        """Verify a local file against the server-side HASH response."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        if not self._connected:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
+        ftp_verify_local_file_with_remote_hash(self._handle, local_path, remote_path, algorithm)
 
     def set_buffer_size(self, size_bytes: int) -> None:
         """Set internal buffer size for data channels."""

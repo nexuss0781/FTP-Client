@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 namespace ftpclient { namespace protocol {
@@ -21,7 +22,8 @@ namespace ftpclient { namespace protocol {
 struct FtpReply {
     uint16_t code;                      // 3-digit reply code
     bool is_multiline;                  // true if reply spans multiple lines
-    std::string_view message;           // Message text (borrowed from buffer)
+    std::string_view message;           // Final message text (borrowed from buffer)
+    std::string full_message;            // Complete multiline message, owned by reply
     
     FtpReply() : code(0), is_multiline(false) {}
 };
@@ -60,6 +62,7 @@ public:
      */
     static ParseResult parse(const char* buffer, size_t length, FtpReply& reply, size_t& consumed) {
         consumed = 0;
+        reply.full_message.clear();
         
         if (buffer == nullptr || length == 0) {
             return ParseResult::MALFORMED;
@@ -118,13 +121,40 @@ public:
         
         // If this is a multiline reply, we need to find the final line
         if (reply.is_multiline) {
-            return parse_multiline(buffer, length, reply, consumed);
+            const ParseResult result = parse_multiline(buffer, length, reply, consumed);
+            if (result == ParseResult::COMPLETE) {
+                append_all_messages(buffer, consumed, reply.full_message);
+            }
+            return result;
         }
-        
+        reply.full_message.assign(reply.message.data(), reply.message.size());
         return ParseResult::COMPLETE;
     }
 
 private:
+    static void append_all_messages(const char* buffer, size_t consumed,
+                                    std::string& output) {
+        output.clear();
+        size_t position = 0;
+        while (position < consumed) {
+            const char* crlf = find_crlf(buffer + position, consumed - position);
+            if (crlf == nullptr) break;
+            const size_t line_length = static_cast<size_t>(crlf - (buffer + position));
+            if (line_length > 0) {
+                if (!output.empty()) output.push_back('\n');
+                const bool numeric_prefix = line_length >= 4 &&
+                    buffer[position] >= '0' && buffer[position] <= '9' &&
+                    buffer[position + 1] >= '0' && buffer[position + 1] <= '9' &&
+                    buffer[position + 2] >= '0' && buffer[position + 2] <= '9' &&
+                    (buffer[position + 3] == ' ' || buffer[position + 3] == '-');
+                const size_t message_start = numeric_prefix ? 4 : 0;
+                output.append(buffer + position + message_start,
+                              line_length - message_start);
+            }
+            position += line_length + 2;
+        }
+    }
+
     /**
      * Check if character is a digit
      */

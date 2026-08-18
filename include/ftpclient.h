@@ -503,6 +503,21 @@ FTP_API int32_t FTP_CALL ftp_rename_remote(ftp_client_t* handle,
                                            const char* from_path,
                                            const char* to_path);
 
+/** Retrieve the server MDTM timestamp for a remote file. */
+FTP_API int32_t FTP_CALL ftp_get_remote_file_mdtm(
+    ftp_client_t* handle, const char* remote_path,
+    char* out_modify, uint32_t out_size);
+
+/** Retrieve a validated server-side HASH digest for a remote file. */
+FTP_API int32_t FTP_CALL ftp_get_remote_file_hash(
+    ftp_client_t* handle, const char* remote_path,
+    const char* algorithm, char* out_hash, uint32_t out_size);
+
+/** Compare a local file’s SHA-256 with a server-side HASH response. */
+FTP_API int32_t FTP_CALL ftp_verify_local_file_with_remote_hash(
+    ftp_client_t* handle, const char* local_path, const char* remote_path,
+    const char* algorithm);
+
 /**
  * Free result resources allocated by ftp_upload_dir() or ftp_download_file().
  * 
@@ -542,6 +557,18 @@ FTP_API uint32_t FTP_CALL ftp_get_version(void);
  */
 FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps);
 
+typedef struct {
+    uint32_t struct_size;
+    int32_t feat_supported;
+    int32_t size_supported;
+    int32_t mdtm_supported;
+    int32_t hash_supported;
+    uint32_t hash_algorithms;
+} ftp_server_capabilities_t;
+
+FTP_API int32_t FTP_CALL ftp_get_server_capabilities(
+    ftp_client_t* handle, ftp_server_capabilities_t* out_caps);
+
 /* Capability Flags (bitmask) */
 #define FTP_CAP_TLS             0x0001  /* TLS/FTPS support compiled in */
 #define FTP_CAP_SENDFILE        0x0002  /* sendfile() zero-copy available (Linux) */
@@ -552,6 +579,11 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps);
 #define FTP_CAP_DATA_FTP        0x0040  /* Real plain FTP passive data transfer */
 #define FTP_CAP_DATA_FTPS       0x0080  /* Real explicit-FTPS protected data transfer */
 #define FTP_CAP_INTEGRITY       0x0100  /* SHA-256 verification and safe fingerprints */
+
+#define FTP_HASH_ALG_MD5        0x0001
+#define FTP_HASH_ALG_SHA1       0x0002
+#define FTP_HASH_ALG_SHA256     0x0004
+#define FTP_HASH_ALG_SHA512     0x0008
 
 /* ----------------------------------------------------------------------------
  * 6.6 Security Functions (Phase 3 - Credential Provider & Certificate Validation)
