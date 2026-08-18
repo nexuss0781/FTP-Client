@@ -51,8 +51,14 @@ public:
     int32_t connect(const char* host, uint16_t port) override;
     int32_t read(void* buffer, uint32_t length) override;
     int32_t write(const void* buffer, uint32_t length) override;
+    void set_timeouts(uint32_t connect_timeout_ms, uint32_t io_timeout_ms) override;
     int32_t shutdown() override;
     bool is_connected() const override;
+
+    /**
+     * Adopt an already-connected FTP control socket for explicit AUTH TLS.
+     */
+    int32_t adopt_socket(int socket_fd, const char* host, uint16_t port);
 
     /**
      * Perform TLS handshake after TCP connection
@@ -90,6 +96,7 @@ public:
 
 private:
     SSL_CTX* ssl_ctx_;          // Shared context (not owned)
+    SSL_CTX* owned_ctx_;        // Optional per-connection context for custom CA bundles
     SSL* ssl_;                  // SSL connection object (owned)
     BIO* bio_;                  // Socket BIO (owned)
     TlsConfig config_;
@@ -100,6 +107,8 @@ private:
     bool connected_;
     bool tls_established_;
     bool implicit_mode_;
+    uint32_t connect_timeout_ms_;
+    uint32_t io_timeout_ms_;
 
     /**
      * Initialize OpenSSL SSL object and BIO

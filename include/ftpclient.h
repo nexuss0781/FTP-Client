@@ -368,8 +368,9 @@ FTP_API int32_t FTP_CALL ftp_set_timeout_command_ms(ftp_client_t* handle, uint32
  * 
  * @param handle  The client handle
  * @param creds   Pointer to credentials structure (borrowed during the call)
- * @return FTP_OK after a real M1 plain control session is authenticated;
- *         FTP_ERR_NOT_IMPLEMENTED for TLS modes not yet integrated
+ * @return FTP_OK after a real plain or explicit-FTPS control session is
+ *         authenticated; FTP_ERR_CERT_VERIFY when requested verification
+ *         fails; FTP_ERR_NOT_IMPLEMENTED for implicit FTPS
  */
 FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials_t* creds);
 
@@ -450,8 +451,9 @@ FTP_API uint32_t FTP_CALL ftp_get_version(void);
 
 /**
  * Fills capability flags that are public and end-to-end tested in this build.
- * M1 exposes plain FTP control sessions only; TLS and data-transfer flags
- * remain clear until those paths are integrated and tested end to end.
+ * M2 exposes plain FTP and explicit-FTPS control sessions. Data-transfer
+ * flags remain clear until the protected data channel is integrated and tested
+ * end to end.
  * 
  * @param out_caps  Pointer to uint64_t to receive capability bitmask
  * @return FTP_OK on success, FTP_ERR_INVALID_ARGUMENT if out_caps is NULL
