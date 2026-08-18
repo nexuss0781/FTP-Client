@@ -66,7 +66,7 @@ public:
      */
     bool enqueue(Task task);
 
-    using WorkerCallback = std::function<void(Task&)>;
+    using WorkerCallback = std::function<void(Task&, uint32_t worker_id)>;
 
     /** Install the callback invoked by each worker for an enqueued task. */
     void set_worker_callback(WorkerCallback callback);
@@ -102,7 +102,7 @@ private:
     /**
      * Worker thread function
      */
-    void worker_loop();
+    void worker_loop(uint32_t worker_id);
 };
 
 }} // namespace ftpclient::transfer

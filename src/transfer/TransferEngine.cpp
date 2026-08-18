@@ -11,6 +11,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
 
 namespace ftpclient { namespace transfer {
 
@@ -21,8 +22,9 @@ TransferEngine::TransferEngine(protocol::ProtocolEngine& protocol_engine,
     , thread_pool_(ThreadPoolConfig{config.max_parallel})
     , buffer_pool_(BufferPoolConfig{config.buffer_size, config.max_parallel * 2})
 {
-    thread_pool_.set_worker_callback([this](Task& task) {
-        execute_worker_task(task);
+    worker_sessions_.resize(thread_pool_.get_worker_count());
+    thread_pool_.set_worker_callback([this](Task& task, uint32_t worker_id) {
+        execute_worker_task(task, worker_id);
     });
 }
 
@@ -205,20 +207,38 @@ void TransferEngine::execute_upload_task(Task& task, protocol::ProtocolEngine* s
     }
 }
 
-void TransferEngine::execute_worker_task(Task& task) {
+void TransferEngine::execute_worker_task(Task& task, uint32_t worker_id) {
     try {
-        protocol::ProtocolEngine session;
-        session.get_config() = protocol_engine_.get_config();
-        int32_t connect_status = session.connect(protocol_engine_.get_credentials());
-        if (connect_status != 0) {
-            task.result_status = connect_status;
-            result_aggregator_.record_result(task.local_path, task.remote_path,
-                                              connect_status, 0, 1, connect_status);
-            return;
+        if (worker_id >= worker_sessions_.size()) {
+            throw std::out_of_range("worker id outside session pool");
         }
-        execute_upload_task(task, &session);
-        session.disconnect();
+        auto& session = worker_sessions_[worker_id];
+        if (!session) {
+            session = std::make_unique<protocol::ProtocolEngine>();
+            session->get_config() = protocol_engine_.get_config();
+        }
+
+        if (!session->is_authenticated()) {
+            int32_t connect_status = session->connect(protocol_engine_.get_credentials());
+            if (connect_status != 0) {
+                task.result_status = connect_status;
+                result_aggregator_.record_result(task.local_path, task.remote_path,
+                                                  connect_status, 0, 1, connect_status);
+                session->disconnect();
+                return;
+            }
+        }
+
+        execute_upload_task(task, session.get());
+        if (task.result_status != 0 || !session->is_authenticated()) {
+            session->disconnect();
+            session.reset();
+        }
     } catch (...) {
+        if (worker_id < worker_sessions_.size() && worker_sessions_[worker_id]) {
+            worker_sessions_[worker_id]->disconnect();
+            worker_sessions_[worker_id].reset();
+        }
         task.result_status = -501;  // FTP_ERR_PROTOCOL
         result_aggregator_.record_result(task.local_path, task.remote_path,
                                           task.result_status, 0, 1,
