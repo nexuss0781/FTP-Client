@@ -280,8 +280,14 @@ def test_m8_exports(lib):
 
 
 def test_m11_exports(lib):
-    """Validate M11 server-feature exports and ABI preconditions."""
-    print("\\n=== Testing M11 Server Features ===")
+    """Validate M11/M12 server-feature exports and ABI preconditions."""
+    print("\\n=== Testing M11/M12 Server Features ===")
+    test_assert("M12 file-result provenance fields are present",
+                 hasattr(FtpFileResult, "verification_status") and
+                 hasattr(FtpFileResult, "local_digest"))
+    test_assert("M12 download-option fields are present",
+                 hasattr(FtpDownloadOptions, "verify_remote_hash") and
+                 hasattr(FtpDownloadOptions, "max_parallel"))
     for symbol in ("ftp_get_server_capabilities", "ftp_get_remote_file_mdtm", "ftp_get_remote_file_hash", "ftp_verify_local_file_with_remote_hash"):
         test_assert(f"{symbol} is exported", hasattr(lib, symbol))
     lib.ftp_get_server_capabilities.restype = ctypes.c_int32
