@@ -187,10 +187,16 @@ int main() {
     const fs::path root = "/tmp/ftpclient_m9_directory";
     std::error_code error;
     fs::remove_all(root, error);
+    ftp_download_digest_t digests[] = {
+        {"/deploy/hello.txt", "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"},
+        {"/deploy/child/nested.bin", "233562de1a0288b139c4fa40b7d189f806e906eeb048517aeb67f34ac0e2faf1"},
+    };
     ftp_download_options_t options{};
     options.struct_size = sizeof(options);
     options.resume_enabled = 0;
     options.resume_metadata_enabled = 0;
+    options.file_digests = digests;
+    options.file_digest_count = 2;
     ftp_result_t result{};
     const int32_t status = ftp_download_dir(client, root.c_str(), "/deploy",
                                             &options, nullptr, nullptr, &result);
@@ -211,6 +217,13 @@ int main() {
     assert(std::string(result.file_results[0].remote_path) == "/deploy/child/nested.bin");
     assert(std::string(result.file_results[1].remote_path) == "/deploy/hello.txt");
     assert(ftp_result_free(&result) == FTP_OK);
+
+    ftp_download_options_t ambiguous_options{};
+    ambiguous_options.struct_size = sizeof(ambiguous_options);
+    ambiguous_options.expected_sha256 = digests[0].sha256;
+    ftp_result_t ambiguous_result{};
+    assert(ftp_download_dir(client, root.c_str(), "/deploy", &ambiguous_options,
+                            nullptr, nullptr, &ambiguous_result) == FTP_ERR_INVALID_ARGUMENT);
 
     const fs::path resume_root = "/tmp/ftpclient_m9_resume";
     fs::remove_all(resume_root, error);

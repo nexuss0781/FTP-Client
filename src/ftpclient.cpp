@@ -29,6 +29,24 @@ static void init_locale() {
     }
 }
 
+static bool path_is_within_root(const std::filesystem::path& root,
+                                const std::filesystem::path& candidate) {
+    std::error_code error;
+    const auto root_canonical = std::filesystem::weakly_canonical(root, error);
+    if (error) return false;
+    error.clear();
+    const auto candidate_canonical = std::filesystem::weakly_canonical(candidate, error);
+    if (error) return false;
+    auto root_it = root_canonical.begin();
+    auto candidate_it = candidate_canonical.begin();
+    for (; root_it != root_canonical.end(); ++root_it, ++candidate_it) {
+        if (candidate_it == candidate_canonical.end() || *root_it != *candidate_it) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* ============================================================================
  * SECTION 6.1: LIFECYCLE FUNCTIONS
  * ============================================================================
@@ -566,6 +584,22 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
             transfer_options.resume_metadata_enabled = options->resume_metadata_enabled != 0;
         }
     }
+    const ftp_download_digest_t* file_digests = nullptr;
+    uint32_t file_digest_count = 0;
+    if (options != nullptr &&
+        options->struct_size >= offsetof(ftp_download_options_t, file_digests) +
+                                sizeof(options->file_digests)) {
+        file_digests = options->file_digests;
+    }
+    if (options != nullptr &&
+        options->struct_size >= offsetof(ftp_download_options_t, file_digest_count) +
+                                sizeof(options->file_digest_count)) {
+        file_digest_count = options->file_digest_count;
+    }
+    if (!transfer_options.expected_sha256.empty() &&
+        (file_digests == nullptr || file_digest_count == 0)) {
+        return FTP_ERR_INVALID_ARGUMENT;
+    }
 
     struct PendingResult {
         std::string local_path;
@@ -610,6 +644,9 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
                     remote_dir == "/" ? "/" + remote_entry.name
                                        : remote_dir + "/" + remote_entry.name;
                 const fs::path child_local = local_dir / remote_entry.name;
+                if (!path_is_within_root(local_root, child_local)) {
+                    return FTP_ERR_INVALID_ARGUMENT;
+                }
                 if (remote_entry.type == "dir") {
                     fs::create_directories(child_local, fs_error);
                     if (fs_error) return FTP_ERR_LOCAL_IO;
@@ -621,6 +658,22 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
                 file_entry.local_absolute_path = child_local.string();
                 file_entry.remote_relative_path = child_remote;
                 file_entry.size_bytes = remote_entry.has_size ? remote_entry.size_bytes : 0;
+                ftpclient::protocol::TransferOptions file_options = transfer_options;
+                if (file_digests != nullptr && file_digest_count > 0) {
+                    const ftp_download_digest_t* matching_digest = nullptr;
+                    for (uint32_t digest_index = 0; digest_index < file_digest_count; ++digest_index) {
+                        const auto& digest = file_digests[digest_index];
+                        if (digest.remote_path != nullptr &&
+                            child_remote == digest.remote_path) {
+                            matching_digest = &digest;
+                            break;
+                        }
+                    }
+                    if (matching_digest == nullptr || matching_digest->sha256 == nullptr) {
+                        return FTP_ERR_INVALID_ARGUMENT;
+                    }
+                    file_options.expected_sha256 = matching_digest->sha256;
+                }
                 uint64_t received = 0;
                 ftpclient::protocol::ProtocolEngine::ProgressCallback file_progress;
                 if (progress_cb != nullptr) {
@@ -632,7 +685,7 @@ FTP_API int32_t FTP_CALL ftp_download_dir(
                     };
                 }
                 const int32_t file_status = impl->getProtocolEngine().download_file(
-                    file_entry, &received, file_progress, transfer_options);
+                    file_entry, &received, file_progress, file_options);
                 pending.push_back({child_local.string(), child_remote, file_status, received});
                 total_bytes += received;
                 if (file_status != FTP_OK && overall_status == FTP_OK) {

@@ -84,6 +84,14 @@ class FtpUploadOptions(ctypes.Structure):
     ]
 
 
+class FtpDownloadDigest(ctypes.Structure):
+    """ftp_download_digest_t structure."""
+    _fields_ = [
+        ("remote_path", ctypes.c_char_p),
+        ("sha256", ctypes.c_char_p),
+    ]
+
+
 class FtpDownloadOptions(ctypes.Structure):
     """ftp_download_options_t structure."""
     _fields_ = [
@@ -92,6 +100,8 @@ class FtpDownloadOptions(ctypes.Structure):
         ("expected_sha256", ctypes.c_char_p),
         ("resume_enabled", ctypes.c_int32),
         ("resume_metadata_enabled", ctypes.c_int32),
+        ("file_digests", ctypes.POINTER(FtpDownloadDigest)),
+        ("file_digest_count", ctypes.c_uint32),
     ]
 
 

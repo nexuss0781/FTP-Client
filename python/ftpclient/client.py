@@ -26,7 +26,9 @@ from ftpclient._core import (
     ftp_cancel,
     ftp_clear_cancel,
 )
-from ftpclient.types import Credentials, UploadOptions, DownloadOptions, UploadResult, DownloadResult, FileResult
+from ftpclient.types import (
+    Credentials, UploadOptions, DownloadDigest, DownloadOptions, UploadResult, DownloadResult, FileResult
+)
 from ftpclient.exceptions import FTPError, FTPConfigError
 
 
@@ -494,6 +496,18 @@ class FTPClient:
         c_options.expected_sha256 = options.expected_sha256.encode("ascii") if options.expected_sha256 else ffi.NULL
         c_options.resume_enabled = 1 if options.resume_enabled else 0
         c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
+        digest_array = ffi.NULL
+        digest_strings = []
+        if options.file_digests:
+            digest_array = ffi.new("ftp_download_digest_t[]", len(options.file_digests))
+            for index, digest in enumerate(options.file_digests):
+                remote_bytes = digest.remote_path.encode("utf-8")
+                sha_bytes = digest.sha256.encode("ascii")
+                digest_strings.append((remote_bytes, sha_bytes))
+                digest_array[index].remote_path = remote_bytes
+                digest_array[index].sha256 = sha_bytes
+            c_options.file_digests = digest_array
+            c_options.file_digest_count = len(options.file_digests)
         progress_cb = ffi.NULL
         progress_cb_id = None
         if progress is not None:
