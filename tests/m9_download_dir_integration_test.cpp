@@ -102,7 +102,12 @@ private:
             } else if (line == "TYPE I\r\n") {
                 send_all(control_fd_, "200 Binary mode\r\n");
             } else if (line == "SIZE /deploy/hello.txt\r\n") {
-                send_all(control_fd_, "213 5\r\n");
+                ++size_requests_;
+                if (size_requests_ == 1) {
+                    send_all(control_fd_, "502 SIZE unsupported\r\n");
+                } else {
+                    send_all(control_fd_, "213 5\r\n");
+                }
             } else if (line.rfind("REST ", 0) == 0) {
                 restart_offset_ = static_cast<size_t>(std::stoul(
                     line.substr(5, line.size() - 7)));
@@ -165,6 +170,7 @@ private:
     int listen_fd_ = -1;
     int control_fd_ = -1;
     size_t restart_offset_ = 0;
+    size_t size_requests_ = 0;
     uint16_t port_ = 0;
     std::thread worker_;
 };
@@ -225,6 +231,21 @@ int main() {
     assert(ftp_download_dir(client, root.c_str(), "/deploy", &ambiguous_options,
                             nullptr, nullptr, &ambiguous_result) == FTP_ERR_INVALID_ARGUMENT);
 
+    const fs::path fallback_root = "/tmp/ftpclient_m10_size_fallback";
+    fs::remove_all(fallback_root, error);
+    fs::create_directories(fallback_root, error);
+    const fs::path fallback_file = fallback_root / "hello.txt";
+    ftp_download_options_t fallback_options{};
+    fallback_options.struct_size = sizeof(fallback_options);
+    fallback_options.resume_enabled = 1;
+    ftp_result_t fallback_result{};
+    assert(ftp_download_file_ex(client, fallback_file.c_str(), "/deploy/hello.txt",
+                                &fallback_options, nullptr, nullptr, &fallback_result) == FTP_OK);
+    std::ifstream fallback_stream(fallback_file, std::ios::binary);
+    std::string fallback_content((std::istreambuf_iterator<char>(fallback_stream)), {});
+    assert(fallback_content == "hello");
+    assert(ftp_result_free(&fallback_result) == FTP_OK);
+
     const fs::path resume_root = "/tmp/ftpclient_m9_resume";
     fs::remove_all(resume_root, error);
     fs::create_directories(resume_root, error);
@@ -250,6 +271,7 @@ int main() {
     assert(ftp_disconnect(client) == FTP_OK);
     assert(ftp_client_destroy(client) == FTP_OK);
     fs::remove_all(root, error);
+    fs::remove_all(fallback_root, error);
     fs::remove_all(resume_root, error);
     std::cout << "M9 directory download and RETR resume integration passed" << std::endl;
     return 0;
