@@ -18,6 +18,7 @@
 #include "ReplyParser.hpp"
 #include "../security/TlsTransport.hpp"
 #include "../security/OpenSSLInit.hpp"
+#include "Integrity.hpp"
 #include <memory>
 #include <string>
 #include <cstring>
@@ -25,6 +26,9 @@
 #include <functional>
 #include <filesystem>
 #include <system_error>
+#include <atomic>
+#include <chrono>
+#include <algorithm>
 
 namespace ftpclient { namespace protocol {
 
@@ -60,6 +64,14 @@ struct ConnectionCredentials {
         , use_tls(0)
         , verify_cert(2)
     {}
+};
+
+struct TransferOptions {
+    std::shared_ptr<std::atomic<bool>> cancel_token;
+    uint32_t stall_timeout_ms = 0;
+    bool resume_enabled = false;
+    bool resume_metadata_enabled = false;
+    std::string expected_sha256;
 };
 
 /**
@@ -171,7 +183,8 @@ public:
     int32_t upload_file(const FileManifestEntry& entry,
                         uint64_t* out_bytes_sent = nullptr,
                         const ProgressCallback& progress = ProgressCallback(),
-                        uint64_t restart_offset = 0);
+                        uint64_t restart_offset = 0,
+                        const TransferOptions& options = TransferOptions());
     
     /**
      * Download a single file (Phase 4)
@@ -181,7 +194,8 @@ public:
      */
     int32_t download_file(const FileManifestEntry& entry,
                           uint64_t* out_bytes_received = nullptr,
-                          const ProgressCallback& progress = ProgressCallback());
+                          const ProgressCallback& progress = ProgressCallback(),
+                          const TransferOptions& options = TransferOptions());
     
     /**
      * Create remote directory (Phase 4)
@@ -223,6 +237,15 @@ public:
      */
     void set_command_timeout(uint32_t ms);
 
+    /** Share a cooperative cancellation token with this protocol session. */
+    void set_cancel_token(const std::shared_ptr<std::atomic<bool>>& token) {
+        cancel_token_ = token;
+    }
+
+    bool is_cancelled() const {
+        return cancel_token_ && cancel_token_->load(std::memory_order_acquire);
+    }
+
 private:
     /**
      * Perform FTP authentication sequence
@@ -240,12 +263,23 @@ private:
     std::unique_ptr<ControlThread> control_thread_;
     TransportFactory transport_factory_;
     bool use_tls_;
+    std::shared_ptr<std::atomic<bool>> cancel_token_;
+
+    void abort_control_session() {
+        if (control_thread_) {
+            control_thread_->stop();
+            control_thread_.reset();
+        }
+        control_thread_ = std::make_unique<ControlThread>();
+        control_transport_.reset();
+    }
 };
 
 inline ProtocolEngine::ProtocolEngine()
     : control_thread_(std::make_unique<ControlThread>())
     , transport_factory_(nullptr)
     , use_tls_(false)
+    , cancel_token_(std::make_shared<std::atomic<bool>>(false))
 {
 }
 
@@ -485,10 +519,32 @@ inline void ProtocolEngine::set_tls_mode(int32_t use_tls) {
     use_tls_ = (use_tls != 0);
 }
 
+inline bool transfer_cancelled(const TransferOptions& options) {
+    return options.cancel_token && options.cancel_token->load(std::memory_order_acquire);
+}
+
+inline uint32_t transfer_io_timeout(const ProtocolEngineConfig& config,
+                                    const TransferOptions& options) {
+    if (options.stall_timeout_ms == 0) {
+        return config.timeout_command_ms;
+    }
+    return std::max<uint32_t>(1, std::min(config.timeout_command_ms,
+                                          options.stall_timeout_ms));
+}
+
+inline bool transfer_deadline_elapsed(
+    const std::chrono::steady_clock::time_point& last_progress,
+    uint32_t timeout_ms) {
+    return timeout_ms != 0 &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - last_progress).count() >= timeout_ms;
+}
+
 inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
                                             uint64_t* out_bytes_sent,
                                             const ProgressCallback& progress,
-                                            uint64_t restart_offset) {
+                                            uint64_t restart_offset,
+                                            const TransferOptions& options) {
     if (out_bytes_sent != nullptr) {
         *out_bytes_sent = 0;
     }
@@ -497,6 +553,13 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
     }
     if (entry.local_absolute_path.empty() || entry.remote_relative_path.empty()) {
         return -202;  // FTP_ERR_INVALID_ARGUMENT
+    }
+    if (transfer_cancelled(options)) {
+        return -604;
+    }
+    if (!options.expected_sha256.empty() &&
+        !integrity::is_sha256_hex(options.expected_sha256)) {
+        return -202;
     }
 
     auto type_future = control_thread_->enqueue_command("TYPE", "I");
@@ -557,7 +620,8 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
     }
 
     auto data_plain = std::make_unique<PlainTransport>();
-    data_plain->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+    data_plain->set_timeouts(config_.timeout_connect_ms,
+                                transfer_io_timeout(config_, options));
     ret = data_plain->connect(passive.ip.c_str(), passive.port);
     if (ret != 0) {
         control_thread_->reset_after_data_error();
@@ -601,7 +665,8 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
         int socket_fd = data_plain->release_socket();
         ret = data_tls->adopt_socket(socket_fd, creds_.host.c_str(), passive.port);
         if (ret == 0) {
-            data_tls->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+            data_tls->set_timeouts(config_.timeout_connect_ms,
+                                  transfer_io_timeout(config_, options));
             ret = data_tls->handshake();
         }
         if (ret != 0) {
@@ -632,14 +697,34 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
 
     char buffer[256 * 1024];
     uint64_t bytes_sent = restart_offset;
+    auto last_progress = std::chrono::steady_clock::now();
     while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
+        if (transfer_cancelled(options)) {
+            data_transport->shutdown();
+            abort_control_session();
+            return -604;
+        }
         std::streamsize bytes = file.gcount();
         size_t offset = 0;
         while (offset < static_cast<size_t>(bytes)) {
+            if (transfer_cancelled(options)) {
+                data_transport->shutdown();
+                abort_control_session();
+                return -604;
+            }
             int32_t written = data_transport->write(
                 buffer + offset, static_cast<uint32_t>(bytes) - static_cast<uint32_t>(offset));
             if (written <= 0) {
+                const bool timed_out = written == -402;
                 data_transport->shutdown();
+                if (transfer_cancelled(options)) {
+                    abort_control_session();
+                    return -604;
+                }
+                if (timed_out && transfer_deadline_elapsed(last_progress, options.stall_timeout_ms)) {
+                    abort_control_session();
+                    return -605;
+                }
                 auto failed_final_future = control_thread_->enqueue_final_transfer_reply();
                 if (failed_final_future.valid()) {
                     (void)failed_final_future.get();
@@ -649,6 +734,7 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
             }
             offset += static_cast<size_t>(written);
             bytes_sent += static_cast<uint64_t>(written);
+            last_progress = std::chrono::steady_clock::now();
             if (progress) {
                 progress(bytes_sent, entry.size_bytes);
             }
@@ -668,6 +754,14 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
         return final_reply.status != 0 ? final_reply.status : -503;
     }
 
+    if (!options.expected_sha256.empty()) {
+        std::string actual_sha256;
+        if (!integrity::sha256_file(entry.local_absolute_path, actual_sha256) ||
+            actual_sha256 != integrity::normalize_sha256(options.expected_sha256)) {
+            return -606;
+        }
+    }
+
     if (progress) {
         progress(entry.size_bytes, entry.size_bytes);
     }
@@ -679,13 +773,21 @@ inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry,
 
 inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
                                               uint64_t* out_bytes_received,
-                                              const ProgressCallback& progress) {
+                                              const ProgressCallback& progress,
+                                              const TransferOptions& options) {
     if (out_bytes_received != nullptr) {
         *out_bytes_received = 0;
     }
     if (!is_authenticated() || !control_thread_ ||
         entry.local_absolute_path.empty() || entry.remote_relative_path.empty()) {
         return -203;  // FTP_ERR_INVALID_STATE
+    }
+    if (transfer_cancelled(options)) {
+        return -604;
+    }
+    if (!options.expected_sha256.empty() &&
+        !integrity::is_sha256_hex(options.expected_sha256)) {
+        return -202;
     }
 
     namespace fs = std::filesystem;
@@ -758,7 +860,8 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
     }
 
     auto data_plain = std::make_unique<PlainTransport>();
-    data_plain->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+    data_plain->set_timeouts(config_.timeout_connect_ms,
+                                transfer_io_timeout(config_, options));
     ret = data_plain->connect(passive.ip.c_str(), passive.port);
     if (ret != 0) {
         output.close();
@@ -803,7 +906,8 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
         int socket_fd = data_plain->release_socket();
         ret = data_tls->adopt_socket(socket_fd, creds_.host.c_str(), passive.port);
         if (ret == 0) {
-            data_tls->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+            data_tls->set_timeouts(config_.timeout_connect_ms,
+                                  transfer_io_timeout(config_, options));
             ret = data_tls->handshake();
         }
         if (ret != 0) {
@@ -820,10 +924,28 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
 
     uint64_t bytes_received = 0;
     char buffer[256 * 1024];
+    auto last_progress = std::chrono::steady_clock::now();
     for (;;) {
+        if (transfer_cancelled(options)) {
+            data_transport->shutdown();
+            output.close();
+            abort_control_session();
+            return -604;
+        }
         int32_t count = data_transport->read(buffer, sizeof(buffer));
         if (count < 0) {
+            const bool timed_out = count == -402;
             data_transport->shutdown();
+            if (transfer_cancelled(options)) {
+                output.close();
+                abort_control_session();
+                return -604;
+            }
+            if (timed_out && transfer_deadline_elapsed(last_progress, options.stall_timeout_ms)) {
+                output.close();
+                abort_control_session();
+                return -605;
+            }
             output.close();
             fs::remove(temp_path, fs_error);
             control_thread_->reset_after_data_error();
@@ -841,6 +963,7 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
             return -601;
         }
         bytes_received += static_cast<uint64_t>(count);
+        last_progress = std::chrono::steady_clock::now();
         if (progress) {
             progress(bytes_received, entry.size_bytes);
         }
@@ -864,6 +987,15 @@ inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry,
         fs::remove(temp_path, fs_error);
         control_thread_->reset_after_data_error();
         return final_reply.status != 0 ? final_reply.status : -503;
+    }
+
+    if (!options.expected_sha256.empty()) {
+        std::string actual_sha256;
+        if (!integrity::sha256_file(temp_path.string(), actual_sha256) ||
+            actual_sha256 != integrity::normalize_sha256(options.expected_sha256)) {
+            fs::remove(temp_path, fs_error);
+            return -606;
+        }
     }
 
     fs::remove(final_path, fs_error);

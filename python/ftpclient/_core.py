@@ -188,6 +188,9 @@ FTP_ERR_PASSIVE_FAILED = -503
 FTP_ERR_LOCAL_IO = -601
 FTP_ERR_REMOTE_IO = -602
 FTP_ERR_PARTIAL = -603
+FTP_ERR_CANCELLED = -604
+FTP_ERR_STALLED = -605
+FTP_ERR_INTEGRITY = -606
 FTP_WARN_PARTIAL_RETRY = 101
 FTP_WARN_SKIPPED = 102
 
@@ -214,6 +217,9 @@ _ERROR_NAMES = {
     FTP_ERR_LOCAL_IO: "FTP_ERR_LOCAL_IO",
     FTP_ERR_REMOTE_IO: "FTP_ERR_REMOTE_IO",
     FTP_ERR_PARTIAL: "FTP_ERR_PARTIAL",
+    FTP_ERR_CANCELLED: "FTP_ERR_CANCELLED",
+    FTP_ERR_STALLED: "FTP_ERR_STALLED",
+    FTP_ERR_INTEGRITY: "FTP_ERR_INTEGRITY",
     FTP_WARN_PARTIAL_RETRY: "FTP_WARN_PARTIAL_RETRY",
     FTP_WARN_SKIPPED: "FTP_WARN_SKIPPED",
 }
@@ -230,6 +236,16 @@ def _get_error_name(code: int) -> str:
 
 # Import exceptions here to avoid circular imports
 # Actual exception classes are defined in ftpclient.exceptions
+
+
+def ftp_cancel(handle):
+    """Request cooperative cancellation of the active C transfer."""
+    return lib.ftp_cancel(handle)
+
+
+def ftp_clear_cancel(handle):
+    """Clear the cooperative cancellation flag."""
+    return lib.ftp_clear_cancel(handle)
 
 
 def _check_error(code: int, operation: str = "operation"):

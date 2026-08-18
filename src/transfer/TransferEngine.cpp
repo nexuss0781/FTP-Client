@@ -7,6 +7,7 @@
 
 #include "TransferEngine.hpp"
 #include "Task.hpp"
+#include "../protocol/Integrity.hpp"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -41,6 +42,9 @@ int32_t TransferEngine::upload_directory(
     namespace fs = std::filesystem;
     
     cancel_flag_.store(false, std::memory_order_release);
+    if (config_.cancel_token) {
+        config_.cancel_token->store(false, std::memory_order_release);
+    }
     result_aggregator_.clear();
     
     /* Step 1: TRAVERSE - Produce FileManifest (Phase 2 DirectoryWalker) */
@@ -132,6 +136,9 @@ int32_t TransferEngine::upload_single_file(
     }
 
     result_aggregator_.clear();
+    if (config_.cancel_token) {
+        config_.cancel_token->store(false, std::memory_order_release);
+    }
     result_aggregator_.set_files_total(1);
     Task task;
     task.type = TaskType::UPLOAD_FILE;
@@ -160,34 +167,79 @@ void TransferEngine::execute_upload_task(Task& task, protocol::ProtocolEngine* s
     retry_config.max_delay_ms = config_.retry_max_delay_ms;
     resilience::RetryPolicy retry_policy(retry_config);
 
+    std::string source_sha256;
+    const std::string expected_sha256 =
+        protocol::integrity::normalize_sha256(config_.expected_sha256);
+    if (!expected_sha256.empty() && !protocol::integrity::is_sha256_hex(expected_sha256)) {
+        task.result_status = -202;
+    } else if (config_.resume_metadata_enabled || !expected_sha256.empty()) {
+        if (!protocol::integrity::sha256_file(task.local_path, source_sha256)) {
+            task.result_status = -601;
+        } else if (!expected_sha256.empty() && source_sha256 != expected_sha256) {
+            task.result_status = -606;
+        }
+    }
+
+    std::error_code metadata_error;
+    const auto source_size = std::filesystem::file_size(task.local_path, metadata_error);
+    const auto source_mtime = std::filesystem::last_write_time(task.local_path, metadata_error);
+    const auto source_mtime_ticks = source_mtime.time_since_epoch().count();
+
     uint64_t bytes_sent = 0;
     uint32_t attempts = 0;
-    task.result_status = retry_policy.execute_with_retry([&]() {
-        uint64_t restart_offset = 0;
-        if (config_.resume_enabled) {
-            uint64_t remote_size = 0;
-            int32_t size_ret = active_session.get_remote_file_size(
-                entry.remote_relative_path, &remote_size);
-            if (size_ret == 0 && remote_size > 0 && remote_size < entry.size_bytes) {
-                restart_offset = remote_size;
+    if (task.result_status == 0) {
+        task.result_status = retry_policy.execute_with_retry([&]() {
+            if (config_.cancel_token && config_.cancel_token->load(std::memory_order_acquire)) {
+                return static_cast<int32_t>(-604);
             }
-        }
 
-        bytes_sent = 0;
-        return active_session.upload_file(
-            entry,
-            &bytes_sent,
-            [&](uint64_t current, uint64_t total) {
-                state.bytes_current = current;
-                state.bytes_total = total;
-                std::lock_guard<std::mutex> lock(progress_mutex_);
-                invoke_progress_callback(
-                    task.local_path, task.remote_path, current, total,
-                    reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
-                    task.progress_user_data, state);
-            },
-            restart_offset);
-    }, &attempts);
+            if (config_.resume_metadata_enabled) {
+                std::error_code current_error;
+                const auto current_size = std::filesystem::file_size(task.local_path, current_error);
+                const auto current_mtime = std::filesystem::last_write_time(task.local_path, current_error);
+                if (current_error || current_size != source_size ||
+                    current_mtime.time_since_epoch().count() != source_mtime_ticks) {
+                    return static_cast<int32_t>(-606);
+                }
+            }
+
+            uint64_t restart_offset = 0;
+            /* A metadata-safe upload never resumes an unrelated pre-existing
+             * remote object. After this invocation has created a partial object,
+             * later retry attempts may use SIZE/REST. */
+            if (config_.resume_enabled &&
+                (!config_.resume_metadata_enabled || attempts > 0)) {
+                uint64_t remote_size = 0;
+                int32_t size_ret = active_session.get_remote_file_size(
+                    entry.remote_relative_path, &remote_size);
+                if (size_ret == 0 && remote_size > 0 && remote_size < entry.size_bytes) {
+                    restart_offset = remote_size;
+                }
+            }
+
+            bytes_sent = 0;
+            protocol::TransferOptions transfer_options;
+            transfer_options.cancel_token = config_.cancel_token;
+            transfer_options.stall_timeout_ms = config_.stall_timeout_ms;
+            transfer_options.resume_enabled = config_.resume_enabled != 0;
+            transfer_options.resume_metadata_enabled = config_.resume_metadata_enabled != 0;
+            transfer_options.expected_sha256 = expected_sha256;
+            return active_session.upload_file(
+                entry,
+                &bytes_sent,
+                [&](uint64_t current, uint64_t total) {
+                    state.bytes_current = current;
+                    state.bytes_total = total;
+                    std::lock_guard<std::mutex> lock(progress_mutex_);
+                    invoke_progress_callback(
+                        task.local_path, task.remote_path, current, total,
+                        reinterpret_cast<ftp_progress_cb_t>(task.progress_cb),
+                        task.progress_user_data, state);
+                },
+                restart_offset,
+                transfer_options);
+        }, &attempts);
+    }
 
     task.bytes_sent = bytes_sent;
     if (task.progress_cb) {
@@ -217,6 +269,7 @@ void TransferEngine::execute_worker_task(Task& task, uint32_t worker_id) {
             session = std::make_unique<protocol::ProtocolEngine>();
             session->get_config() = protocol_engine_.get_config();
         }
+        session->set_cancel_token(config_.cancel_token);
 
         if (!session->is_authenticated()) {
             int32_t connect_status = session->connect(protocol_engine_.get_credentials());

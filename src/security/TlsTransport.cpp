@@ -5,8 +5,8 @@
  */
 
 #include "TlsTransport.hpp"
-#include <cstring>
 #include <cerrno>
+#include <cstring>
 
 // OpenSSL headers - only this file should include them
 #include <openssl/ssl.h>
@@ -341,6 +341,11 @@ int32_t TlsTransport::read(void* buffer, uint32_t length) {
             // Orderly close
             connected_ = false;
             return 0;
+        } else if (ssl_error == SSL_ERROR_WANT_READ ||
+                   ssl_error == SSL_ERROR_WANT_WRITE ||
+                   (ssl_error == SSL_ERROR_SYSCALL &&
+                    (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT))) {
+            return ERR_TIMEOUT;
         } else if (ssl_error == SSL_ERROR_SYSCALL) {
             connected_ = false;
             return ERR_NETWORK_RESET;
@@ -369,6 +374,12 @@ int32_t TlsTransport::write(const void* buffer, uint32_t length) {
         if (result <= 0) {
             int ssl_error = SSL_get_error(ssl_, result);
             
+            if (ssl_error == SSL_ERROR_WANT_READ ||
+                ssl_error == SSL_ERROR_WANT_WRITE ||
+                (ssl_error == SSL_ERROR_SYSCALL &&
+                 (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT))) {
+                return ERR_TIMEOUT;
+            }
             if (ssl_error == SSL_ERROR_SYSCALL) {
                 connected_ = false;
                 return ERR_NETWORK_RESET;
