@@ -152,6 +152,10 @@ typedef struct {
     int32_t     resume_enabled;     /* 0 = overwrite, 1 = resume partial */
     int32_t     create_remote_dirs; /* 0 = fail if missing, 1 = auto-create */
     const char* remote_chmod;       /* Nullable. e.g., "0644". Applied after upload */
+    /* M8 extension fields; callers must set struct_size before using them. */
+    const char* expected_sha256;    /* Nullable. Lowercase/uppercase hex digest */
+    uint32_t    stall_timeout_ms;   /* 0 = disabled; bounded data-I/O stall deadline */
+    int32_t     resume_metadata_enabled; /* 0 = legacy SIZE resume, 1 = fingerprint-safe */
 } ftp_upload_options_t;
 
 /*
@@ -294,6 +298,9 @@ typedef void (*ftp_event_cb_t)(const ftp_event_t* event, void* user_data);
 #define FTP_ERR_LOCAL_IO                -601
 #define FTP_ERR_REMOTE_IO               -602
 #define FTP_ERR_PARTIAL                 -603
+#define FTP_ERR_CANCELLED               -604
+#define FTP_ERR_STALLED                 -605
+#define FTP_ERR_INTEGRITY               -606
 
 /* Warnings (+1xx) */
 #define FTP_WARN_PARTIAL_RETRY          101
@@ -443,6 +450,29 @@ FTP_API int32_t FTP_CALL ftp_download_file(
     ftp_result_t*       out_result
 );
 
+/* M8 download options. The struct_size prefix permits older callers to omit
+ * all extension fields safely. */
+typedef struct {
+    uint32_t    struct_size;
+    uint32_t    stall_timeout_ms;   /* 0 = disabled; bounded data-I/O stall deadline */
+    const char* expected_sha256;    /* Nullable. Lowercase/uppercase hex digest */
+} ftp_download_options_t;
+
+FTP_API int32_t FTP_CALL ftp_download_file_ex(
+    ftp_client_t*                 handle,
+    const char*                   local_path,
+    const char*                   remote_path,
+    const ftp_download_options_t* options,
+    ftp_progress_cb_t             progress_cb,
+    void*                         user_data,
+    ftp_result_t*                 out_result
+);
+
+/* Cooperative cancellation for the currently executing synchronous transfer.
+ * Cancellation is sticky until ftp_clear_cancel() or a new transfer starts. */
+FTP_API int32_t FTP_CALL ftp_cancel(ftp_client_t* handle);
+FTP_API int32_t FTP_CALL ftp_clear_cancel(ftp_client_t* handle);
+
 /** Execute serialized remote filesystem operations on an authenticated session. */
 FTP_API int32_t FTP_CALL ftp_change_directory(ftp_client_t* handle, const char* remote_path);
 FTP_API int32_t FTP_CALL ftp_parent_directory(ftp_client_t* handle);
@@ -500,6 +530,7 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps);
 #define FTP_CAP_CONTROL_FTP     0x0020  /* Real plain FTP control session */
 #define FTP_CAP_DATA_FTP        0x0040  /* Real plain FTP passive data transfer */
 #define FTP_CAP_DATA_FTPS       0x0080  /* Real explicit-FTPS protected data transfer */
+#define FTP_CAP_INTEGRITY       0x0100  /* SHA-256 verification and safe fingerprints */
 
 /* ----------------------------------------------------------------------------
  * 6.6 Security Functions (Phase 3 - Credential Provider & Certificate Validation)

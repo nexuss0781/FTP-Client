@@ -308,6 +308,8 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
     config.retry_attempts = client_config.retry_max_attempts;
     config.retry_base_delay_ms = client_config.retry_base_delay_ms;
     config.retry_max_delay_ms = client_config.retry_max_delay_ms;
+    config.stall_timeout_ms = client_config.stall_timeout_ms;
+    config.cancel_token = impl->getCancelToken();
     if (options != nullptr) {
         config.max_parallel = options->max_parallel > 0
             ? static_cast<uint32_t>(options->max_parallel) : 0;
@@ -322,6 +324,18 @@ FTP_API int32_t FTP_CALL ftp_upload_dir(
         if (options->struct_size >= sizeof(ftp_upload_options_t) &&
             options->remote_chmod != nullptr) {
             /* chmod is intentionally deferred until a later milestone. */
+        }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, expected_sha256) +
+                                    sizeof(options->expected_sha256)) {
+            config.expected_sha256 = options->expected_sha256 ? options->expected_sha256 : "";
+        }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, stall_timeout_ms) +
+                                    sizeof(options->stall_timeout_ms)) {
+            config.stall_timeout_ms = options->stall_timeout_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_upload_options_t, resume_metadata_enabled) +
+                                    sizeof(options->resume_metadata_enabled)) {
+            config.resume_metadata_enabled = options->resume_metadata_enabled;
         }
     }
 
@@ -405,6 +419,19 @@ FTP_API int32_t FTP_CALL ftp_download_file(
     void* user_data,
     ftp_result_t* out_result
 ) {
+    return ftp_download_file_ex(handle, local_path, remote_path, nullptr,
+                                 progress_cb, user_data, out_result);
+}
+
+FTP_API int32_t FTP_CALL ftp_download_file_ex(
+    ftp_client_t* handle,
+    const char* local_path,
+    const char* remote_path,
+    const ftp_download_options_t* options,
+    ftp_progress_cb_t progress_cb,
+    void* user_data,
+    ftp_result_t* out_result
+) {
     if (handle == nullptr) {
         return FTP_ERR_INVALID_HANDLE;
     }
@@ -421,6 +448,20 @@ FTP_API int32_t FTP_CALL ftp_download_file(
     }
     if (impl->getState() != ftpclient::ClientState::CONNECTED) {
         return FTP_ERR_INVALID_STATE;
+    }
+
+    impl->clearCancellation();
+    ftpclient::protocol::TransferOptions transfer_options;
+    transfer_options.cancel_token = impl->getCancelToken();
+    if (options != nullptr) {
+        if (options->struct_size >= offsetof(ftp_download_options_t, stall_timeout_ms) +
+                                    sizeof(options->stall_timeout_ms)) {
+            transfer_options.stall_timeout_ms = options->stall_timeout_ms;
+        }
+        if (options->struct_size >= offsetof(ftp_download_options_t, expected_sha256) +
+                                    sizeof(options->expected_sha256)) {
+            transfer_options.expected_sha256 = options->expected_sha256 ? options->expected_sha256 : "";
+        }
     }
 
     try {
@@ -441,7 +482,7 @@ FTP_API int32_t FTP_CALL ftp_download_file(
 
         uint64_t bytes_received = 0;
         int32_t status = impl->getProtocolEngine().download_file(
-            entry, &bytes_received, progress);
+            entry, &bytes_received, progress, transfer_options);
         if (out_result != nullptr) {
             out_result->status = status;
             out_result->files_total = 1;
@@ -473,6 +514,23 @@ FTP_API int32_t FTP_CALL ftp_download_file(
         }
         return FTP_ERR_SYSTEM;
     }
+}
+
+FTP_API int32_t FTP_CALL ftp_cancel(ftp_client_t* handle) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    if (impl->getState() != ftpclient::ClientState::CONNECTED) return FTP_ERR_INVALID_STATE;
+    impl->requestCancellation();
+    return FTP_OK;
+}
+
+FTP_API int32_t FTP_CALL ftp_clear_cancel(ftp_client_t* handle) {
+    if (handle == nullptr) return FTP_ERR_INVALID_HANDLE;
+    auto impl = reinterpret_cast<ftpclient::FtpClientImpl*>(handle);
+    if (!impl->isValid()) return FTP_ERR_INVALID_HANDLE;
+    impl->clearCancellation();
+    return FTP_OK;
 }
 
 FTP_API int32_t FTP_CALL ftp_change_directory(ftp_client_t* handle, const char* remote_path) {
@@ -559,7 +617,8 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
      */
     /* M4 exposes tested control, passive data, protected data, and REST resume. */
     *out_caps = FTP_CAP_CONTROL_FTP | FTP_CAP_TLS |
-                FTP_CAP_RESUME | FTP_CAP_DATA_FTP | FTP_CAP_DATA_FTPS;
+                FTP_CAP_RESUME | FTP_CAP_DATA_FTP | FTP_CAP_DATA_FTPS |
+                FTP_CAP_INTEGRITY;
     return FTP_OK;
 }
 

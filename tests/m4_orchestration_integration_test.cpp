@@ -320,6 +320,7 @@ bool test_retry_resume_and_progress() {
     options.retry_attempts = 1;
     options.retry_base_delay_ms = 0;
     options.resume_enabled = 1;
+    options.resume_metadata_enabled = 1;
     options.create_remote_dirs = 1;
     ftp_result_t result{};
     int32_t ret = ftp_upload_dir(client, root.c_str(), "deploy", &options,
@@ -331,7 +332,7 @@ bool test_retry_resume_and_progress() {
                 result.file_results[0].bytes_sent == payload.size(),
                 "M4 retry attempt and byte accounting are accurate");
     ok &= check(server.file("deploy/retry.bin") == payload,
-                "M4 REST resume reconstructs the complete file");
+                "M4/M8 metadata-safe REST resume reconstructs the complete file");
     ok &= check(progress.callbacks > 0 && progress.last_bytes == payload.size(),
                 "M4 progress callback reports final bytes");
     ok &= check(ftp_result_free(&result) == FTP_OK, "M4 retry result frees");

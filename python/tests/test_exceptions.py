@@ -82,6 +82,9 @@ def test_error_code_mapping():
     assert _get_error_name(0) == "FTP_OK"
     assert _get_error_name(-301) == "FTP_ERR_AUTH_FAILED"
     assert _get_error_name(-401) == "FTP_ERR_CONNECT"
+    assert _get_error_name(-604) == "FTP_ERR_CANCELLED"
+    assert _get_error_name(-605) == "FTP_ERR_STALLED"
+    assert _get_error_name(-606) == "FTP_ERR_INTEGRITY"
     assert _get_error_name(-999) == "UNKNOWN(-999)"
     
     # Test exception raising for each category
@@ -96,6 +99,9 @@ def test_error_code_mapping():
         (-502, FTPProtocolError, "server denied"),
         (-601, FTPIOError, "local IO"),
         (-602, FTPIOError, "remote IO"),
+        (-604, FTPIOError, "cancelled"),
+        (-605, FTPIOError, "stalled"),
+        (-606, FTPIOError, "integrity"),
         (-201, FTPConfigError, "invalid handle"),
         (-202, FTPConfigError, "invalid argument"),
         (-204, FTPNotImplementedError, "feature unavailable"),

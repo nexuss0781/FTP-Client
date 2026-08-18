@@ -23,8 +23,10 @@ from ftpclient._core import (
     _get_callback_handle,
     ftp_client_create,
     ftp_client_destroy,
+    ftp_cancel,
+    ftp_clear_cancel,
 )
-from ftpclient.types import Credentials, UploadOptions, UploadResult, FileResult
+from ftpclient.types import Credentials, UploadOptions, DownloadOptions, UploadResult, DownloadResult, FileResult
 from ftpclient.exceptions import FTPError, FTPConfigError
 
 
@@ -342,6 +344,9 @@ class FTPClient:
         c_options.resume_enabled = 1 if options.resume_enabled else 0
         c_options.create_remote_dirs = 1 if options.create_remote_dirs else 0
         c_options.remote_chmod = options.remote_chmod.encode('utf-8') if options.remote_chmod else ffi.NULL
+        c_options.expected_sha256 = options.expected_sha256.encode('ascii') if options.expected_sha256 else ffi.NULL
+        c_options.stall_timeout_ms = options.stall_timeout_ms
+        c_options.resume_metadata_enabled = 1 if options.resume_metadata_enabled else 0
         
         # Set up progress callback if provided
         progress_cb = ffi.NULL
@@ -409,6 +414,65 @@ class FTPClient:
         
         return py_result
     
+    def download_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        options: Optional[DownloadOptions] = None,
+        progress: Optional[Callable[[Path, str, int, int, float], None]] = None
+    ) -> DownloadResult:
+        """Download one remote file with optional SHA-256 verification and stall protection."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        if not self._connected:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
+        options = options or DownloadOptions()
+        local_bytes = os.fsencode(local_path)
+        remote_bytes = remote_path.encode("utf-8")
+        c_options = ffi.new("ftp_download_options_t*")
+        c_options.struct_size = ffi.sizeof("ftp_download_options_t")
+        c_options.stall_timeout_ms = options.stall_timeout_ms
+        c_options.expected_sha256 = options.expected_sha256.encode("ascii") if options.expected_sha256 else ffi.NULL
+        result_ptr = ffi.new("ftp_result_t*")
+        ret = lib.ftp_download_file_ex(self._handle, local_bytes, remote_bytes,
+                                       c_options, ffi.NULL, ffi.NULL, result_ptr)
+        file_results = []
+        if result_ptr.file_results != ffi.NULL and result_ptr.file_result_count > 0:
+            for i in range(result_ptr.file_result_count):
+                fr = result_ptr.file_results[i]
+                file_results.append(FileResult(
+                    local_path=Path(ffi.string(fr.local_path).decode("utf-8")) if fr.local_path != ffi.NULL else Path(),
+                    remote_path=ffi.string(fr.remote_path).decode("utf-8") if fr.remote_path != ffi.NULL else "",
+                    status=int(fr.status),
+                    bytes_sent=int(fr.bytes_sent),
+                    attempt_count=int(fr.attempt_count),
+                    final_error=int(fr.final_error) if fr.final_error != 0 else None,
+                ))
+        result = DownloadResult(
+            status=int(result_ptr.status),
+            files_total=int(result_ptr.files_total),
+            files_success=int(result_ptr.files_success),
+            files_failed=int(result_ptr.files_failed),
+            bytes_transferred=int(result_ptr.bytes_transferred),
+            file_results=tuple(file_results),
+        )
+        lib.ftp_result_free(result_ptr)
+        if ret != lib.FTP_OK and result.status == lib.FTP_OK:
+            _check_error(ret, "download_file")
+        return result
+
+    def cancel(self) -> None:
+        """Request cancellation of the active synchronous transfer."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        _check_error(ftp_cancel(self._handle), "cancel")
+
+    def clear_cancel(self) -> None:
+        """Clear the cooperative cancellation flag."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        _check_error(ftp_clear_cancel(self._handle), "clear_cancel")
+
     def set_buffer_size(self, size_bytes: int) -> None:
         """Set internal buffer size for data channels."""
         if self._handle is None:

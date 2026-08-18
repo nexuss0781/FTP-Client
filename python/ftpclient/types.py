@@ -13,6 +13,7 @@ This module defines:
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple
+import re
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,9 @@ class UploadOptions:
     resume_enabled: bool = False
     create_remote_dirs: bool = True
     remote_chmod: Optional[str] = None
+    expected_sha256: Optional[str] = None
+    stall_timeout_ms: int = 0
+    resume_metadata_enabled: bool = False
     
     def __post_init__(self) -> None:
         """Validate upload options."""
@@ -83,6 +87,27 @@ class UploadOptions:
             raise ValueError(f"retry_attempts must be >= 0, got {self.retry_attempts}")
         if self.retry_base_delay_ms < 0:
             raise ValueError(f"retry_base_delay_ms must be >= 0, got {self.retry_base_delay_ms}")
+        if self.stall_timeout_ms < 0:
+            raise ValueError(f"stall_timeout_ms must be >= 0, got {self.stall_timeout_ms}")
+        if self.expected_sha256 is not None:
+            digest = self.expected_sha256.replace(":", "").lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ValueError("expected_sha256 must be a 64-character hexadecimal digest")
+
+
+@dataclass(frozen=True)
+class DownloadOptions:
+    """Integrity and stall controls for one remote-file download."""
+    expected_sha256: Optional[str] = None
+    stall_timeout_ms: int = 0
+
+    def __post_init__(self) -> None:
+        if self.stall_timeout_ms < 0:
+            raise ValueError(f"stall_timeout_ms must be >= 0, got {self.stall_timeout_ms}")
+        if self.expected_sha256 is not None:
+            digest = self.expected_sha256.replace(":", "").lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ValueError("expected_sha256 must be a 64-character hexadecimal digest")
 
 
 @dataclass(frozen=True)
@@ -106,6 +131,21 @@ class FileResult:
     bytes_sent: int
     attempt_count: int = 1
     final_error: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class DownloadResult:
+    """Result of a single remote-file download."""
+    status: int
+    files_total: int
+    files_success: int
+    files_failed: int
+    bytes_transferred: int
+    file_results: Tuple[FileResult, ...] = field(default_factory=tuple)
+
+    @property
+    def success(self) -> bool:
+        return self.status == 0 and self.files_failed == 0
 
 
 @dataclass(frozen=True)

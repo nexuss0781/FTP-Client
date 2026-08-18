@@ -65,6 +65,12 @@ void test_retry_policy_error_classification() {
     /* Permanent Local Errors should NOT be retryable */
     assert(RetryPolicy::is_retryable(-601) == false);  /* FTP_ERR_LOCAL_IO */
     TEST_PASS("FTP_ERR_LOCAL_IO (-601) is NOT retryable");
+
+    assert(RetryPolicy::is_retryable(-604) == false);  /* FTP_ERR_CANCELLED */
+    TEST_PASS("FTP_ERR_CANCELLED (-604) is NOT retryable");
+
+    assert(RetryPolicy::is_retryable(-606) == false);  /* FTP_ERR_INTEGRITY */
+    TEST_PASS("FTP_ERR_INTEGRITY (-606) is NOT retryable");
     
     /* Ambiguous errors are retryable */
     assert(RetryPolicy::is_retryable(-602) == true);  /* FTP_ERR_REMOTE_IO */
