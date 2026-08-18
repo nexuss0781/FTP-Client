@@ -43,6 +43,8 @@ class UploadOptions:
 class DownloadOptions:
     expected_sha256: Optional[str]
     stall_timeout_ms: int
+    resume_enabled: bool
+    resume_metadata_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -173,6 +175,25 @@ class AsyncFTPClient:
         options: Optional[UploadOptions] = ...,
         progress: Optional[ProgressCallback] = ...
     ) -> UploadResult: ...
+
+    async def download_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        options: Optional[DownloadOptions] = ...,
+        progress: Optional[ProgressCallback] = ...
+    ) -> DownloadResult: ...
+
+    async def download_directory(
+        self,
+        local_path: str,
+        remote_path: str,
+        options: Optional[DownloadOptions] = ...,
+        progress: Optional[ProgressCallback] = ...
+    ) -> DownloadResult: ...
+
+    async def cancel(self) -> None: ...
+    async def clear_cancel(self) -> None: ...
     
     async def set_buffer_size(self, size_bytes: int) -> None: ...
     async def set_timeout_connect_ms(self, ms: int) -> None: ...

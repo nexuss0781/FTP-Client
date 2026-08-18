@@ -97,9 +97,11 @@ class UploadOptions:
 
 @dataclass(frozen=True)
 class DownloadOptions:
-    """Integrity and stall controls for one remote-file download."""
+    """Integrity, stall, and durable-resume controls for one remote-file download."""
     expected_sha256: Optional[str] = None
     stall_timeout_ms: int = 0
+    resume_enabled: bool = False
+    resume_metadata_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.stall_timeout_ms < 0:
