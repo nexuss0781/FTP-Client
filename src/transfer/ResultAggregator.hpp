@@ -26,8 +26,10 @@ struct FileResult {
     std::string remote_path;
     int32_t status;             /* FTP_OK or error code */
     uint64_t bytes_sent;
+    uint32_t attempt_count;
+    int32_t final_error;
     
-    FileResult() : status(0), bytes_sent(0) {}
+    FileResult() : status(0), bytes_sent(0), attempt_count(1), final_error(0) {}
 };
 
 /**
@@ -51,7 +53,9 @@ public:
     void record_result(const std::string& local_path, 
                        const std::string& remote_path,
                        int32_t status,
-                       uint64_t bytes_sent);
+                       uint64_t bytes_sent,
+                       uint32_t attempt_count = 1,
+                       int32_t final_error = 0);
     
     /**
      * Add to total bytes transferred counter

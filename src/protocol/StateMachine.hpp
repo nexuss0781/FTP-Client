@@ -177,6 +177,9 @@ public:
      */
     void set_state(ProtocolState s) { state_ = s; }
 
+    /** Return to the authenticated command state after a recoverable data error. */
+    void reset_after_data_error() { state_ = ProtocolState::AUTHENTICATED; }
+
 private:
     ProtocolState state_;
     
@@ -329,8 +332,15 @@ private:
         return TransitionResult::INVALID_STATE;
     }
     
-    TransitionResult handle_data_transferring(FtpCommand, uint16_t) {
-        // Data transfer in progress
+    TransitionResult handle_data_transferring(FtpCommand cmd, uint16_t reply_code) {
+        // A final reply is received after the data socket has closed.
+        if ((cmd == FtpCommand::LIST || cmd == FtpCommand::RETR ||
+             cmd == FtpCommand::STOR || cmd == FtpCommand::APPE) &&
+            (reply_code == 226 || reply_code == 250)) {
+            state_ = ProtocolState::AUTHENTICATED;
+            return TransitionResult::SUCCESS;
+        }
+        // Data transfer preliminary reply (125/150) keeps the transfer active.
         return TransitionResult::SUCCESS;
     }
     

@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <cstring>
+#include <fstream>
 
 namespace ftpclient { namespace protocol {
 
@@ -162,7 +163,7 @@ public:
      * @param entry File manifest entry
      * @return 0 on success, negative error code on failure
      */
-    int32_t upload_file(const FileManifestEntry& entry);
+    int32_t upload_file(const FileManifestEntry& entry, uint64_t* out_bytes_sent = nullptr);
     
     /**
      * Download a single file (Phase 4)
@@ -462,10 +463,161 @@ inline void ProtocolEngine::set_tls_mode(int32_t use_tls) {
     use_tls_ = (use_tls != 0);
 }
 
-inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry) {
-    // Phase 4 stub
-    (void)entry;
-    return -203;  // FTP_ERR_INVALID_STATE - not implemented yet
+inline int32_t ProtocolEngine::upload_file(const FileManifestEntry& entry, uint64_t* out_bytes_sent) {
+    if (out_bytes_sent != nullptr) {
+        *out_bytes_sent = 0;
+    }
+    if (!is_authenticated() || !control_thread_) {
+        return -203;  // FTP_ERR_INVALID_STATE
+    }
+    if (entry.local_absolute_path.empty() || entry.remote_relative_path.empty()) {
+        return -202;  // FTP_ERR_INVALID_ARGUMENT
+    }
+
+    auto type_future = control_thread_->enqueue_command("TYPE", "I");
+    if (!type_future.valid()) {
+        return -401;
+    }
+    int32_t ret = type_future.get();
+    if (ret != 0) {
+        return ret;
+    }
+
+    // EPSV is preferred because it avoids server-supplied address data. If a
+    // server rejects it, retain the authenticated session and fall back to
+    // classic IPv4 PASV.
+    auto passive_future = control_thread_->enqueue_command_with_reply("EPSV", "");
+    if (!passive_future.valid()) {
+        return -401;
+    }
+    CommandReply passive_reply = passive_future.get();
+    PassiveModeResult passive;
+    if (passive_reply.status == 0 && passive_reply.code == 229) {
+        passive = DataChannel::parse_epsv(passive_reply.message.empty()
+            ? std::string("229") : std::string("229 ") + passive_reply.message);
+        passive.ip = control_thread_->get_host();
+    }
+
+    if (passive.port == 0) {
+        control_thread_->reset_after_data_error();
+        auto pasv_future = control_thread_->enqueue_command_with_reply("PASV", "");
+        if (!pasv_future.valid()) {
+            return -401;
+        }
+        passive_reply = pasv_future.get();
+        if (passive_reply.status != 0 || passive_reply.code != 227) {
+            return passive_reply.status != 0 ? passive_reply.status : -503;
+        }
+        passive = DataChannel::parse_pasv(
+            passive_reply.message.empty()
+                ? std::string("227") : std::string("227 ") + passive_reply.message,
+            control_thread_->get_host());
+    }
+
+    if (passive.ip.empty() || passive.port == 0) {
+        control_thread_->reset_after_data_error();
+        return -501;  // FTP_ERR_PROTOCOL
+    }
+
+    auto data_plain = std::make_unique<PlainTransport>();
+    data_plain->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+    ret = data_plain->connect(passive.ip.c_str(), passive.port);
+    if (ret != 0) {
+        control_thread_->reset_after_data_error();
+        return ret;
+    }
+
+    // STOR must be accepted with 125/150 before application bytes are sent.
+    auto stor_future = control_thread_->enqueue_command_with_reply("STOR", entry.remote_relative_path);
+    if (!stor_future.valid()) {
+        data_plain->shutdown();
+        control_thread_->reset_after_data_error();
+        return -401;
+    }
+    CommandReply stor_reply = stor_future.get();
+    if (stor_reply.status != 0 || (stor_reply.code != 125 && stor_reply.code != 150)) {
+        data_plain->shutdown();
+        control_thread_->reset_after_data_error();
+        return stor_reply.status != 0 ? stor_reply.status : -503;
+    }
+
+    std::unique_ptr<Transport> data_transport;
+    if (creds_.use_tls == 1) {
+        security::TlsConfig tls_config;
+        tls_config.server_name = creds_.host;
+        tls_config.ca_bundle_path = creds_.ca_bundle_path;
+        if (creds_.verify_cert == 0) {
+            tls_config.verify_mode = security::CertVerifyMode::NONE;
+        } else if (creds_.verify_cert == 1) {
+            tls_config.verify_mode = security::CertVerifyMode::PEER;
+        } else {
+            tls_config.verify_mode = security::CertVerifyMode::HOST;
+        }
+        void* shared_ctx = security::get_shared_ssl_ctx();
+        if (shared_ctx == nullptr) {
+            data_plain->shutdown();
+            control_thread_->reset_after_data_error();
+            return -102;
+        }
+        auto data_tls = std::make_unique<security::TlsTransport>(
+            static_cast<SSL_CTX*>(shared_ctx), tls_config);
+        int socket_fd = data_plain->release_socket();
+        ret = data_tls->adopt_socket(socket_fd, creds_.host.c_str(), passive.port);
+        if (ret == 0) {
+            data_tls->set_timeouts(config_.timeout_connect_ms, config_.timeout_command_ms);
+            ret = data_tls->handshake();
+        }
+        if (ret != 0) {
+            data_tls->shutdown();
+            control_thread_->reset_after_data_error();
+            return ret;
+        }
+        data_transport = std::move(data_tls);
+    } else {
+        data_transport = std::move(data_plain);
+    }
+
+    std::ifstream file(entry.local_absolute_path, std::ios::binary);
+    if (!file) {
+        data_transport->shutdown();
+        control_thread_->reset_after_data_error();
+        return -601;  // FTP_ERR_LOCAL_IO
+    }
+
+    char buffer[256 * 1024];
+    uint64_t bytes_sent = 0;
+    while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
+        std::streamsize bytes = file.gcount();
+        size_t offset = 0;
+        while (offset < static_cast<size_t>(bytes)) {
+            int32_t written = data_transport->write(
+                buffer + offset, static_cast<uint32_t>(bytes) - static_cast<uint32_t>(offset));
+            if (written <= 0) {
+                data_transport->shutdown();
+                control_thread_->reset_after_data_error();
+                return written < 0 ? written : -403;
+            }
+            offset += static_cast<size_t>(written);
+            bytes_sent += static_cast<uint64_t>(written);
+        }
+    }
+    data_transport->shutdown();
+
+    // Only a positive final reply makes the upload successful. The control
+    // worker reads it after the data transport has sent its close indication.
+    auto final_future = control_thread_->enqueue_final_transfer_reply();
+    if (!final_future.valid()) {
+        return -401;
+    }
+    CommandReply final_reply = final_future.get();
+    if (final_reply.status != 0 || (final_reply.code != 226 && final_reply.code != 250)) {
+        return final_reply.status != 0 ? final_reply.status : -503;
+    }
+
+    if (out_bytes_sent != nullptr) {
+        *out_bytes_sent = bytes_sent;
+    }
+    return 0;
 }
 
 inline int32_t ProtocolEngine::download_file(const FileManifestEntry& entry) {

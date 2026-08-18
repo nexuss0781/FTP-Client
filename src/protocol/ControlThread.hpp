@@ -26,10 +26,23 @@ namespace ftpclient { namespace protocol {
  * Command structure for the control channel queue
  * Per spec Section 4.2
  */
+struct CommandReply {
+    int32_t status;
+    uint16_t code;
+    std::string message;
+
+    CommandReply() : status(-401), code(0) {}
+};
+
 struct Command {
     std::string verb;                    // e.g., "USER", "PASV", "STOR"
     std::string arg;                     // Payload, may be empty
     std::promise<int32_t> result;        // Fulfilled by control thread with error code
+    std::promise<CommandReply> detailed_result;
+    bool wants_detailed_reply = false;
+    bool final_transfer_reply = false;
+    uint16_t reply_code = 0;
+    std::string reply_message;
     
     Command() = default;
     Command(const std::string& v, const std::string& a) : verb(v), arg(a) {}
@@ -84,6 +97,14 @@ public:
      */
     std::future<int32_t> enqueue_command(const std::string& verb, const std::string& arg, 
                                           uint32_t timeout_ms = 0);
+
+    /** Enqueue a command and return its status plus parsed reply text. */
+    std::future<CommandReply> enqueue_command_with_reply(const std::string& verb,
+                                                          const std::string& arg,
+                                                          uint32_t timeout_ms = 0);
+
+    /** Wait for the final 226/250 reply after a data socket closes. */
+    std::future<CommandReply> enqueue_final_transfer_reply(uint32_t timeout_ms = 0);
     
     /**
      * Send QUIT and close connection gracefully
@@ -101,6 +122,9 @@ public:
      * Get current protocol state
      */
     ProtocolState get_state() const;
+
+    /** Return the serialized control state to AUTHENTICATED after data cleanup. */
+    void reset_after_data_error();
     
     /**
      * Check if authenticated
@@ -257,6 +281,36 @@ inline std::future<int32_t> ControlThread::enqueue_command(const std::string& ve
     return future;
 }
 
+inline std::future<CommandReply> ControlThread::enqueue_command_with_reply(
+    const std::string& verb, const std::string& arg, uint32_t timeout_ms) {
+    (void)timeout_ms;
+
+    Command cmd(verb, arg);
+    cmd.wants_detailed_reply = true;
+    auto future = cmd.detailed_result.get_future();
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        command_queue_.push(std::move(cmd));
+    }
+    queue_cv_.notify_one();
+    return future;
+}
+
+inline std::future<CommandReply> ControlThread::enqueue_final_transfer_reply(uint32_t timeout_ms) {
+    (void)timeout_ms;
+
+    Command cmd("STOR", "");
+    cmd.wants_detailed_reply = true;
+    cmd.final_transfer_reply = true;
+    auto future = cmd.detailed_result.get_future();
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        command_queue_.push(std::move(cmd));
+    }
+    queue_cv_.notify_one();
+    return future;
+}
+
 inline int32_t ControlThread::disconnect() {
     if (!running_.load(std::memory_order_acquire)) {
         return 0;
@@ -274,6 +328,10 @@ inline int32_t ControlThread::disconnect() {
 
 inline ProtocolState ControlThread::get_state() const {
     return state_machine_.get_state();
+}
+
+inline void ControlThread::reset_after_data_error() {
+    state_machine_.reset_after_data_error();
 }
 
 inline bool ControlThread::is_authenticated() const {
@@ -318,9 +376,17 @@ inline void ControlThread::run_loop() {
         // Execute command
         int32_t result = execute_command(cmd);
         
-        // Set promise value
+        // Set the requested result promise.
         try {
-            cmd.result.set_value(result);
+            if (cmd.wants_detailed_reply) {
+                CommandReply detailed;
+                detailed.status = result;
+                detailed.code = cmd.reply_code;
+                detailed.message = std::move(cmd.reply_message);
+                cmd.detailed_result.set_value(std::move(detailed));
+            } else {
+                cmd.result.set_value(result);
+            }
         } catch (...) {
             // Promise already satisfied or broken
         }
@@ -334,26 +400,37 @@ inline void ControlThread::run_loop() {
 }
 
 inline int32_t ControlThread::execute_command(Command& cmd) {
-    // Validate state
+    // Validate state. A final-transfer command only receives the reply that
+    // follows the data socket close; it must not write a second FTP command.
     FtpCommand ftp_cmd = map_verb_to_command(cmd.verb);
     
-    // Send command
-    int32_t ret = send_command(cmd.verb, cmd.arg);
-    if (ret != 0) {
-        state_machine_.set_error();
-        return ret;
+    if (!cmd.final_transfer_reply) {
+        int32_t send_ret = send_command(cmd.verb, cmd.arg);
+        if (send_ret != 0) {
+            state_machine_.set_error();
+            return send_ret;
+        }
     }
     
     // Read response
     FtpReply reply;
-    ret = read_response(reply);
+    int32_t ret = read_response(reply);
     if (ret != 0) {
         state_machine_.set_error();
         return ret;
     }
-    
-    // Preserve the published server-error taxonomy before state validation.
-    if (!is_ftp_success(reply.code) && !is_ftp_intermediate(reply.code)) {
+
+    cmd.reply_code = reply.code;
+    cmd.reply_message.assign(reply.message.data(), reply.message.size());
+
+    // A passive-command rejection is recoverable: callers may try the other
+    // passive dialect without losing the authenticated control session.
+    if (!is_ftp_success(reply.code) && !is_ftp_intermediate(reply.code) &&
+        !is_ftp_preliminary(reply.code)) {
+        if (cmd.verb == "PASV" || cmd.verb == "EPSV") {
+            state_machine_.set_state(ProtocolState::AUTHENTICATED);
+            return map_ftp_code_to_error(reply.code);
+        }
         state_machine_.set_error();
         return map_ftp_code_to_error(reply.code);
     }
@@ -362,6 +439,9 @@ inline int32_t ControlThread::execute_command(Command& cmd) {
     auto transition = state_machine_.transition(ftp_cmd, reply.code);
     if (transition == TransitionResult::INVALID_STATE) {
         return -203;  // FTP_ERR_INVALID_STATE
+    }
+    if (transition == TransitionResult::PROTOCOL_ERROR) {
+        return -501;
     }
 
     // A transition-approved 3xx response is valid for USER/PASS flows.
