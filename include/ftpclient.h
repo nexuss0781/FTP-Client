@@ -456,9 +456,22 @@ typedef struct {
     uint32_t    struct_size;
     uint32_t    stall_timeout_ms;   /* 0 = disabled; bounded data-I/O stall deadline */
     const char* expected_sha256;    /* Nullable. Lowercase/uppercase hex digest */
+    int32_t     resume_enabled;     /* 0 = truncate, 1 = continue .part when valid */
+    int32_t     resume_metadata_enabled; /* 1 = require matching sidecar and digest */
 } ftp_download_options_t;
 
 FTP_API int32_t FTP_CALL ftp_download_file_ex(
+    ftp_client_t*                 handle,
+    const char*                   local_path,
+    const char*                   remote_path,
+    const ftp_download_options_t* options,
+    ftp_progress_cb_t             progress_cb,
+    void*                         user_data,
+    ftp_result_t*                 out_result
+);
+
+/** Recursively enumerate and download a remote directory through MLSD. */
+FTP_API int32_t FTP_CALL ftp_download_dir(
     ftp_client_t*                 handle,
     const char*                   local_path,
     const char*                   remote_path,

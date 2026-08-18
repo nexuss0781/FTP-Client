@@ -526,6 +526,7 @@ inline FtpCommand ControlThread::map_verb_to_command(const std::string& verb) {
     if (verb == "EPSV") return FtpCommand::EPSV;
     if (verb == "LIST") return FtpCommand::LIST;
     if (verb == "NLST") return FtpCommand::NLST;
+    if (verb == "MLSD") return FtpCommand::MLSD;
     if (verb == "RETR") return FtpCommand::RETR;
     if (verb == "STOR") return FtpCommand::STOR;
     if (verb == "APPE") return FtpCommand::APPE;

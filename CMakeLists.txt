@@ -320,6 +320,16 @@ set_target_properties(download_integration_test PROPERTIES
 )
 add_test(NAME download_integration_test COMMAND download_integration_test)
 
+# M9 MLSD parser and protocol-state regression test
+add_executable(m9_remote_listing_test tests/m9_remote_listing_test.cpp)
+target_include_directories(m9_remote_listing_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(m9_remote_listing_test PRIVATE pthread)
+set_target_properties(m9_remote_listing_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME m9_remote_listing_test COMMAND m9_remote_listing_test)
+
 # Header purity test - compile header as pure C99
 add_executable(header_purity_test tests/header_purity_test.c)
 target_include_directories(header_purity_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
