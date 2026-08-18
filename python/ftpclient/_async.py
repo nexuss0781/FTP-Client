@@ -202,6 +202,19 @@ class AsyncFTPClient:
         return await self._run_in_executor(
             self._sync_client.remote_file_hash, remote_path, algorithm)
 
+    async def verify_local_file_with_remote_hash(
+        self, local_path: str, remote_path: str, algorithm: str = "SHA-256"
+    ) -> None:
+        """Verify a local file against the server-side HASH response asynchronously."""
+        if self._sync_client is None:
+            raise RuntimeError("Client not initialized")
+        await self._run_in_executor(
+            self._sync_client.verify_local_file_with_remote_hash,
+            local_path,
+            remote_path,
+            algorithm,
+        )
+
     async def set_buffer_size(self, size_bytes: int) -> None:
         """Set internal buffer size (async)."""
         if self._sync_client is None:

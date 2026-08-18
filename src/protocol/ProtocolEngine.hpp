@@ -243,6 +243,9 @@ public:
     int32_t get_remote_file_hash(const std::string& remote_path,
                                  const std::string& algorithm,
                                  std::string* out_hash);
+    int32_t verify_local_file_with_remote_hash(const std::string& local_path,
+                                               const std::string& remote_path,
+                                               const std::string& algorithm);
     
     /* ========================================================================
      * Configuration
@@ -1521,6 +1524,32 @@ inline int32_t ProtocolEngine::get_remote_file_hash(const std::string& remote_pa
         }
     }
     return -501;
+}
+
+inline int32_t ProtocolEngine::verify_local_file_with_remote_hash(
+    const std::string& local_path, const std::string& remote_path,
+    const std::string& algorithm) {
+    if (!is_authenticated() || local_path.empty() || remote_path.empty() ||
+        algorithm.empty() || !control_thread_) {
+        return -202;
+    }
+    const std::string requested = uppercase_feature_token(algorithm);
+    if (requested != "SHA-256" && requested != "SHA256") {
+        return -204;
+    }
+    std::string local_hash;
+    if (!integrity::sha256_file(local_path, local_hash)) {
+        return -601;
+    }
+    std::string remote_hash;
+    const int32_t remote_ret = get_remote_file_hash(remote_path, algorithm, &remote_hash);
+    if (remote_ret != 0) {
+        return remote_ret;
+    }
+    if (integrity::normalize_sha256(local_hash) != integrity::normalize_sha256(remote_hash)) {
+        return -606;
+    }
+    return 0;
 }
 
 inline int32_t ProtocolEngine::get_remote_file_size(const std::string& remote_path, uint64_t* out_size) {

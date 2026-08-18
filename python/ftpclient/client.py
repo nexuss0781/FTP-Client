@@ -28,6 +28,7 @@ from ftpclient._core import (
     ftp_get_server_capabilities,
     ftp_get_remote_file_mdtm,
     ftp_get_remote_file_hash,
+    ftp_verify_local_file_with_remote_hash,
 )
 from ftpclient.types import (
     Credentials, UploadOptions, DownloadDigest, DownloadOptions, UploadResult, DownloadResult, FileResult
@@ -593,6 +594,16 @@ class FTPClient:
         if not self._connected:
             raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
         return ftp_get_remote_file_hash(self._handle, remote_path, algorithm)
+
+    def verify_local_file_with_remote_hash(
+        self, local_path: str, remote_path: str, algorithm: str = "SHA-256"
+    ) -> None:
+        """Verify a local file against the server-side HASH response."""
+        if self._handle is None:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_HANDLE, "Client not initialized")
+        if not self._connected:
+            raise FTPConfigError(lib.FTP_ERR_INVALID_STATE, "Not connected to server")
+        ftp_verify_local_file_with_remote_hash(self._handle, local_path, remote_path, algorithm)
 
     def set_buffer_size(self, size_bytes: int) -> None:
         """Set internal buffer size for data channels."""

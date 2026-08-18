@@ -513,6 +513,11 @@ FTP_API int32_t FTP_CALL ftp_get_remote_file_hash(
     ftp_client_t* handle, const char* remote_path,
     const char* algorithm, char* out_hash, uint32_t out_size);
 
+/** Compare a local file’s SHA-256 with a server-side HASH response. */
+FTP_API int32_t FTP_CALL ftp_verify_local_file_with_remote_hash(
+    ftp_client_t* handle, const char* local_path, const char* remote_path,
+    const char* algorithm);
+
 /**
  * Free result resources allocated by ftp_upload_dir() or ftp_download_file().
  * 

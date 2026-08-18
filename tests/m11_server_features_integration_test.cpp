@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <cassert>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <netinet/in.h>
 #include <string>
@@ -138,8 +139,27 @@ int main() {
 
     char too_small[4] = {};
     assert(ftp_get_remote_file_hash(client, "/deploy/app.js", "SHA-256", too_small, sizeof(too_small)) == FTP_ERR_INVALID_ARGUMENT);
+
+    const std::string matching_local = "/tmp/m11-matching-app.js";
+    const std::string mismatching_local = "/tmp/m11-mismatching-app.js";
+    {
+        std::ofstream output(matching_local, std::ios::binary);
+        output << "hello";
+    }
+    {
+        std::ofstream output(mismatching_local, std::ios::binary);
+        output << "wrong";
+    }
+    assert(ftp_verify_local_file_with_remote_hash(
+               client, matching_local.c_str(), "/deploy/app.js", "SHA-256") == FTP_OK);
+    assert(ftp_verify_local_file_with_remote_hash(
+               client, mismatching_local.c_str(), "/deploy/app.js", "SHA-256") == FTP_ERR_INTEGRITY);
+    assert(ftp_verify_local_file_with_remote_hash(
+               client, matching_local.c_str(), "/deploy/app.js", "MD5") == FTP_ERR_NOT_IMPLEMENTED);
+    ::unlink(matching_local.c_str());
+    ::unlink(mismatching_local.c_str());
     assert(ftp_disconnect(client) == FTP_OK);
     assert(ftp_client_destroy(client) == FTP_OK);
-    std::cout << "M11 FEAT, MDTM, HASH integration passed" << std::endl;
+    std::cout << "M11 FEAT, MDTM, HASH, and verification integration passed" << std::endl;
     return 0;
 }
