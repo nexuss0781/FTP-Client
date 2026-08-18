@@ -55,6 +55,18 @@ def find_library():
 # C Type Definitions
 # ============================================================================
 
+class FtpServerCapabilities(ctypes.Structure):
+    """ftp_server_capabilities_t structure."""
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("feat_supported", ctypes.c_int32),
+        ("size_supported", ctypes.c_int32),
+        ("mdtm_supported", ctypes.c_int32),
+        ("hash_supported", ctypes.c_int32),
+        ("hash_algorithms", ctypes.c_uint32),
+    ]
+
+
 class FtpCredentials(ctypes.Structure):
     """ftp_credentials_t structure."""
     _fields_ = [
@@ -261,6 +273,32 @@ def test_m8_exports(lib):
     test_assert("ftp_download_dir without connection fails", lib.ftp_download_dir(
         handle, b"/tmp/m9", b"/deploy", None, None, None,
         ctypes.byref(result)) == FTP_ERR_INVALID_STATE)
+    lib.ftp_client_destroy(handle)
+
+
+def test_m11_exports(lib):
+    """Validate M11 server-feature exports and ABI preconditions."""
+    print("\\n=== Testing M11 Server Features ===")
+    for symbol in ("ftp_get_server_capabilities", "ftp_get_remote_file_mdtm", "ftp_get_remote_file_hash"):
+        test_assert(f"{symbol} is exported", hasattr(lib, symbol))
+    lib.ftp_get_server_capabilities.restype = ctypes.c_int32
+    lib.ftp_get_server_capabilities.argtypes = [ctypes.c_void_p, ctypes.POINTER(FtpServerCapabilities)]
+    lib.ftp_get_remote_file_mdtm.restype = ctypes.c_int32
+    lib.ftp_get_remote_file_mdtm.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+    lib.ftp_get_remote_file_hash.restype = ctypes.c_int32
+    lib.ftp_get_remote_file_hash.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+    capabilities = FtpServerCapabilities()
+    capabilities.struct_size = ctypes.sizeof(FtpServerCapabilities)
+    test_assert("server capabilities NULL handle fails",
+                 lib.ftp_get_server_capabilities(None, ctypes.byref(capabilities)) == FTP_ERR_INVALID_HANDLE)
+    test_assert("remote MDTM NULL handle fails",
+                 lib.ftp_get_remote_file_mdtm(None, b"/file", ctypes.create_string_buffer(64), 64) == FTP_ERR_INVALID_HANDLE)
+    test_assert("remote HASH NULL handle fails",
+                 lib.ftp_get_remote_file_hash(None, b"/file", b"SHA-256", ctypes.create_string_buffer(129), 129) == FTP_ERR_INVALID_HANDLE)
+    handle = ctypes.c_void_p()
+    lib.ftp_client_create(ctypes.byref(handle))
+    test_assert("server capabilities disconnected handle fails",
+                 lib.ftp_get_server_capabilities(handle, ctypes.byref(capabilities)) == FTP_ERR_INVALID_STATE)
     lib.ftp_client_destroy(handle)
 
 
@@ -510,6 +548,7 @@ def main():
     # Run tests
     test_version_capabilities(lib)
     test_m8_exports(lib)
+    test_m11_exports(lib)
     test_handle_lifecycle(lib)
     test_configuration(lib)
     test_connection(lib)
