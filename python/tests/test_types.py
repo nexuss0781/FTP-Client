@@ -14,6 +14,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+def test_server_capabilities_dataclass():
+    """Test M11 FEAT-derived server capability values."""
+    print("Testing ServerCapabilities dataclass...")
+    from ftpclient.types import ServerCapabilities
+    capabilities = ServerCapabilities(True, True, True, True, 0x000C)
+    assert capabilities.feat_supported is True
+    assert capabilities.supports_sha256 is True
+    assert capabilities.supports_sha512 is True
+    print("[PASS] ServerCapabilities dataclass works correctly")
+    return True
+
+
 def test_credentials_dataclass():
     """Test Credentials dataclass."""
     print("Testing Credentials dataclass...")
@@ -236,6 +248,7 @@ if __name__ == "__main__":
     results = []
     
     try:
+        results.append(test_server_capabilities_dataclass())
         results.append(test_credentials_dataclass())
         results.append(test_upload_options_dataclass())
         results.append(test_download_digest_dataclass())
