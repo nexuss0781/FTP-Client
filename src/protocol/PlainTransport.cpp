@@ -21,6 +21,7 @@
     #include <netinet/tcp.h>
     #include <arpa/inet.h>
     #include <netdb.h>
+    #include <sys/time.h>
     #include <unistd.h>
     #include <fcntl.h>
 #endif
@@ -28,6 +29,8 @@
 namespace ftpclient { namespace protocol {
 
 // Error codes matching Phase 1 ABI
+static constexpr int32_t ERR_INVALID_ARGUMENT = -202;
+static constexpr int32_t ERR_INVALID_STATE = -203;
 static constexpr int32_t ERR_CONNECT = -401;
 static constexpr int32_t ERR_TIMEOUT = -402;
 static constexpr int32_t ERR_NETWORK_RESET = -403;
@@ -38,6 +41,8 @@ PlainTransport::PlainTransport()
     , host_()
     , port_(0)
     , connected_(false)
+    , connect_timeout_ms_(5000)
+    , io_timeout_ms_(30000)
 {
 }
 
@@ -47,7 +52,7 @@ PlainTransport::~PlainTransport() {
 
 int32_t PlainTransport::connect(const char* host, uint16_t port) {
     if (host == nullptr || port == 0) {
-        return -EINVAL;
+        return ERR_INVALID_ARGUMENT;
     }
     
     // Close any existing connection
@@ -100,8 +105,11 @@ int32_t PlainTransport::connect(const char* host, uint16_t port) {
 }
 
 int32_t PlainTransport::read(void* buffer, uint32_t length) {
-    if (!connected_ || buffer == nullptr || length == 0) {
-        return -EINVAL;
+    if (!connected_) {
+        return ERR_INVALID_STATE;
+    }
+    if (buffer == nullptr || length == 0) {
+        return ERR_INVALID_ARGUMENT;
     }
     
 #ifdef _WIN32
@@ -136,8 +144,11 @@ int32_t PlainTransport::read(void* buffer, uint32_t length) {
 }
 
 int32_t PlainTransport::write(const void* buffer, uint32_t length) {
-    if (!connected_ || buffer == nullptr || length == 0) {
-        return -EINVAL;
+    if (!connected_) {
+        return ERR_INVALID_STATE;
+    }
+    if (buffer == nullptr || length == 0) {
+        return ERR_INVALID_ARGUMENT;
     }
     
     uint32_t total_written = 0;
@@ -175,6 +186,15 @@ int32_t PlainTransport::write(const void* buffer, uint32_t length) {
     }
     
     return static_cast<int32_t>(total_written);
+}
+
+void PlainTransport::set_timeouts(uint32_t connect_timeout_ms, uint32_t io_timeout_ms) {
+    if (connect_timeout_ms != 0) {
+        connect_timeout_ms_ = connect_timeout_ms;
+    }
+    if (io_timeout_ms != 0) {
+        io_timeout_ms_ = io_timeout_ms;
+    }
 }
 
 int32_t PlainTransport::shutdown() {
@@ -263,6 +283,20 @@ int32_t PlainTransport::configure_socket(SocketHandle sock) {
     setsockopt(sock, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&sndbuf), sizeof(sndbuf));
 #else
     setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+#endif
+
+    // Apply bounded blocking I/O deadlines to prevent control-thread hangs.
+#ifdef _WIN32
+    DWORD recv_timeout = io_timeout_ms_;
+    DWORD send_timeout = io_timeout_ms_;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&recv_timeout), sizeof(recv_timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&send_timeout), sizeof(send_timeout));
+#else
+    struct timeval timeout{};
+    timeout.tv_sec = static_cast<time_t>(io_timeout_ms_ / 1000);
+    timeout.tv_usec = static_cast<suseconds_t>((io_timeout_ms_ % 1000) * 1000);
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 #endif
     
     return 0;

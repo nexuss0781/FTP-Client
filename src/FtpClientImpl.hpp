@@ -18,6 +18,7 @@
 #include "security/CredentialVault.hpp"
 #include "security/SecretProvider.hpp"
 #include "security/TlsConfig.hpp"
+#include "protocol/ProtocolEngine.hpp"
 #include "../include/ftpclient.h"  /* For ftp_event_cb_t */
 
 namespace ftpclient {
@@ -110,6 +111,12 @@ public:
     const security::CredentialVault& getVault() const { return vault_; }
     
     /**
+     * Get protocol engine for the real control session.
+     */
+    protocol::ProtocolEngine& getProtocolEngine() { return *protocol_engine_; }
+    const protocol::ProtocolEngine& getProtocolEngine() const { return *protocol_engine_; }
+
+    /**
      * Get credential provider
      */
     security::SecretProvider* getProvider() { return provider_.get(); }
@@ -187,6 +194,7 @@ public:
 private:
     std::atomic<ClientState> state_;
     ClientConfig config_;
+    std::unique_ptr<protocol::ProtocolEngine> protocol_engine_;
     security::CredentialVault vault_;
     std::unique_ptr<security::SecretProvider> provider_;
     CertVerifyCallback cert_callback_;
@@ -200,6 +208,7 @@ private:
 // Inline implementations to ensure symbols are available
 inline FtpClientImpl::FtpClientImpl() 
     : state_(ClientState::UNINITIALIZED)
+    , protocol_engine_(std::make_unique<protocol::ProtocolEngine>())
     , cert_callback_(nullptr)
     , cert_callback_userdata_(nullptr)
     , event_callback_(nullptr)
@@ -208,6 +217,9 @@ inline FtpClientImpl::FtpClientImpl()
 }
 
 inline FtpClientImpl::~FtpClientImpl() {
+    if (protocol_engine_) {
+        protocol_engine_->disconnect();
+    }
     // Vault destructor handles secure cleanup
 }
 

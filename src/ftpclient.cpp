@@ -123,6 +123,7 @@ FTP_API int32_t FTP_CALL ftp_set_timeout_connect_ms(ftp_client_t* handle, uint32
     }
     
     impl->getConfig().timeout_connect = ms;
+    impl->getProtocolEngine().get_config().timeout_connect_ms = ms;
     return FTP_OK;
 }
 
@@ -143,6 +144,7 @@ FTP_API int32_t FTP_CALL ftp_set_timeout_command_ms(ftp_client_t* handle, uint32
     }
     
     impl->getConfig().timeout_command = ms;
+    impl->getProtocolEngine().set_command_timeout(ms);
     return FTP_OK;
 }
 
@@ -194,12 +196,30 @@ FTP_API int32_t FTP_CALL ftp_connect(ftp_client_t* handle, const ftp_credentials
         return FTP_ERR_INVALID_ARGUMENT;
     }
     
-    /*
-     * M0 deliberately does not claim a real network connection. The protocol
-     * and TLS subsystems are still being wired into the public facade. Do not
-     * store credentials or transition state until the real session exists.
-     */
-    return FTP_ERR_NOT_IMPLEMENTED;
+    ftpclient::protocol::ConnectionCredentials engine_creds;
+    engine_creds.host = creds_to_use->host;
+    engine_creds.port = creds_to_use->port;
+    engine_creds.username = creds_to_use->username ? creds_to_use->username : "";
+    engine_creds.password = creds_to_use->password ? creds_to_use->password : "";
+    engine_creds.use_tls = creds_to_use->use_tls;
+
+    impl->getProtocolEngine().get_config().timeout_connect_ms = impl->getConfig().timeout_connect;
+    impl->getProtocolEngine().set_command_timeout(impl->getConfig().timeout_command);
+    int32_t ret = impl->getProtocolEngine().connect(engine_creds);
+    if (ret != FTP_OK) {
+        return ret;
+    }
+
+    if (creds_to_use->username && creds_to_use->password) {
+        ret = impl->getVault().store(creds_to_use);
+        if (ret != FTP_OK) {
+            impl->getProtocolEngine().disconnect();
+            return ret;
+        }
+    }
+
+    impl->setState(ftpclient::ClientState::CONNECTED);
+    return FTP_OK;
 }
 
 FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle) {
@@ -213,20 +233,16 @@ FTP_API int32_t FTP_CALL ftp_disconnect(ftp_client_t* handle) {
         return FTP_ERR_INVALID_HANDLE;
     }
     
-    /* Can only disconnect from CONNECTED state */
+    /* Disconnect is idempotent for allocated and disconnected handles. */
     auto state = impl->getState();
     if (state != ftpclient::ClientState::CONNECTED) {
-        /* Already disconnected or in wrong state - treat as success for idempotency */
         return FTP_OK;
     }
-    
-    /* Securely purge credentials from vault */
+
+    int32_t ret = impl->getProtocolEngine().disconnect();
     impl->getVault().purge();
-    
-    /* Transition to DISCONNECTED state */
     impl->setState(ftpclient::ClientState::DISCONNECTED);
-    
-    return FTP_OK;
+    return ret;
 }
 
 FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle) {
@@ -245,12 +261,12 @@ FTP_API int32_t FTP_CALL ftp_ping(ftp_client_t* handle) {
     if (state != ftpclient::ClientState::CONNECTED) {
         return FTP_ERR_INVALID_STATE;
     }
-    
-    return FTP_OK;
+
+    return impl->getProtocolEngine().ping();
 }
 
 /* ============================================================================
- * SECTION 6.4: TRANSFER OPERATIONS (Phase 1 Stub)
+ * SECTION 6.4: TRANSFER OPERATIONS (M1 Unavailable)
  * ============================================================================
  */
 
@@ -322,12 +338,12 @@ FTP_API int32_t FTP_CALL ftp_get_capabilities(uint64_t* out_caps) {
     }
     
     /*
-     * M0 truthfulness rule: a capability is public only when the exported
-     * execution path invokes and tests it end to end. The repository contains
-     * protocol/TLS/transfer scaffolding, but ftp_connect() and ftp_upload_dir()
-     * are not yet wired to those subsystems. Do not advertise latent features.
+     * M1 truthfulness rule: only the plain control session is public because
+     * it is wired and tested through the exported execution path. TLS and
+     * data-transfer features remain intentionally unadvertised.
      */
-    *out_caps = 0;
+    /* M1 exposes only the real plain control session. */
+    *out_caps = FTP_CAP_CONTROL_FTP;
     return FTP_OK;
 }
 

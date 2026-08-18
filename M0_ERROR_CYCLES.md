@@ -43,3 +43,11 @@ The C ABI test passed under CTest, but loading the Debug shared library from Pyt
 ## Python exception range mapping
 
 The new exception regression test exposed an existing boundary bug: `-301` was mapped to `FTPNetworkError` because the range condition was written in the wrong direction. The mapping will be corrected to explicit inclusive error bands for authentication, network, protocol, I/O, configuration, and system errors.
+
+## M1 linker integration
+
+The first M1 clean build compiled the public facade but failed at ABI-test linking because `PlainTransport::PlainTransport()` was undefined. The existing CMake source list compiled `ftpclient.cpp` and security/transfer/resilience units but omitted `src/protocol/PlainTransport.cpp`. M1 will add the concrete transport source to the library target and rerun the clean build.
+
+## M1 control-thread shutdown
+
+The loopback control test proved successful login, NOOP, QUIT, and 530 mapping, but the process aborted after authentication failure because the worker loop set `running=false` on a fatal reply while its `std::thread` remained joinable. The destructor returned without joining that thread, causing `std::terminate`. M1 shutdown will join any joinable worker even when the loop has already stopped and will reset the protocol engine’s thread owner on failed sessions.
